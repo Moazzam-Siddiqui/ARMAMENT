@@ -11,6 +11,7 @@ import logging
 import sys
 
 import uvicorn
+from dotenv import load_dotenv
 
 from .config import Config, load_config
 from .docker_client import DockerClient
@@ -35,6 +36,10 @@ def main() -> int:
         format="[%(name)s] %(message)s",
         stream=sys.stdout,
     )
+
+    # Loaded before load_config so a .env file works as the README describes.
+    # Real environment variables win, which keeps deployments overridable.
+    load_dotenv(override=False)
 
     try:
         config: Config = load_config()
