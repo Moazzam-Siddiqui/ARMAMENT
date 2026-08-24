@@ -43,10 +43,14 @@ export class ServiceNotFoundError extends Error {
 export class DockerClient {
   readonly #docker: Docker;
   readonly #label: string;
+  readonly #labelKey: string;
+  readonly #labelValue: string;
 
   constructor(config: Config) {
     this.#docker = new Docker();
     this.#label = `${config.label.key}=${config.label.value}`;
+    this.#labelKey = config.label.key;
+    this.#labelValue = config.label.value;
   }
 
   /** Verifies the daemon is reachable, so startup fails loudly rather than per-request. */
@@ -155,6 +159,95 @@ export class DockerClient {
         memoryUsed !== null && memoryLimit ? round((memoryUsed / memoryLimit) * 100) : null,
     };
   }
+
+  /** Restarts a service in place. Config and image are unchanged. */
+  async restart(name: string, timeoutSeconds = 10): Promise<void> {
+    const container = await this.resolve(name);
+    await container.restart({ t: timeoutSeconds });
+  }
+
+  /**
+   * Raises the memory ceiling of a running service. Swap is pinned to the same
+   * value: left alone, Docker grants swap equal to twice the limit, which turns
+   * an out-of-memory crash into silent thrashing that is harder to diagnose.
+   */
+  async setMemoryLimit(name: string, megabytes: number): Promise<{ previousMb: number | null }> {
+    const container = await this.resolve(name);
+    const before = await container.inspect();
+    const previous = before.HostConfig.Memory;
+    const bytes = Math.floor(megabytes * 1024 * 1024);
+
+    await container.update({ Memory: bytes, MemorySwap: bytes });
+
+    return { previousMb: previous ? round(previous / 1024 / 1024) : null };
+  }
+
+  /**
+   * Replaces a service with the same configuration on a different image tag.
+   *
+   * Docker cannot swap the image of an existing container, so this destroys and
+   * rebuilds it. That makes it the one genuinely unrecoverable operation here,
+   * and it is ordered accordingly: the replacement image is verified present
+   * before anything is torn down, and a failed rebuild is retried once on the
+   * original image so a bad tag cannot leave the service simply gone.
+   */
+  async recreateWithImage(
+    name: string,
+    image: string,
+  ): Promise<{ previousImage: string; recovered: boolean }> {
+    const container = await this.resolve(name);
+    const info = await container.inspect();
+    const previousImage = info.Config.Image;
+
+    if (previousImage === image) {
+      throw new Error(`${name} already runs ${image}; nothing to roll back to.`);
+    }
+
+    // Verified before teardown: pulling here could stall for minutes mid-incident.
+    const available = await this.#docker.listImages({ filters: { reference: [image] } });
+    if (available.length === 0) {
+      throw new Error(
+        `Image "${image}" is not present locally. Pull it first; this tool will ` +
+          `not fetch images while a service is being rebuilt.`,
+      );
+    }
+
+    const spec = buildRecreateSpec(info, image);
+
+    // The label must survive, or the rebuilt service falls outside managed scope
+    // and no tool here can reach it again.
+    if (spec.Labels?.[this.#labelKey] !== this.#labelValue) {
+      throw new Error(
+        `Refusing to rebuild ${name}: its managed label is missing, so the ` +
+          `replacement would be unreachable by this agent.`,
+      );
+    }
+
+    await container.stop({ t: 10 }).catch(() => undefined);
+    await container.remove({ force: true });
+
+    try {
+      const created = await this.#docker.createContainer(spec);
+      await created.start();
+      return { previousImage, recovered: false };
+    } catch (error) {
+      const rebuilt = await this.#docker
+        .createContainer(buildRecreateSpec(info, previousImage))
+        .then(async (c) => {
+          await c.start();
+          return true;
+        })
+        .catch(() => false);
+
+      throw new Error(
+        `Rebuilding ${name} on ${image} failed: ${error instanceof Error ? error.message : error}. ` +
+          (rebuilt
+            ? `The service was restored on ${previousImage}.`
+            : `THE SERVICE IS DOWN and could not be restored on ${previousImage}. ` +
+              `This needs manual recovery now.`),
+      );
+    }
+  }
 }
 
 function stripLeadingSlash(name: string): string {
@@ -186,4 +279,27 @@ function demultiplex(buffer: Buffer): string {
   }
 
   return chunks.length > 0 ? chunks.join("") : buffer.toString("utf8");
+}
+
+/**
+ * Rebuilds a creation spec from an inspected container, swapping only the image.
+ * HostConfig carries ports, mounts, restart policy and resource limits, so
+ * copying it wholesale is what keeps the replacement faithful to the original.
+ */
+function buildRecreateSpec(
+  info: Docker.ContainerInspectInfo,
+  image: string,
+): Docker.ContainerCreateOptions {
+  return {
+    name: stripLeadingSlash(info.Name),
+    Image: image,
+    Cmd: info.Config.Cmd,
+    Entrypoint: info.Config.Entrypoint,
+    Env: info.Config.Env,
+    Labels: info.Config.Labels,
+    ExposedPorts: info.Config.ExposedPorts,
+    WorkingDir: info.Config.WorkingDir,
+    User: info.Config.User,
+    HostConfig: info.HostConfig,
+  };
 }
