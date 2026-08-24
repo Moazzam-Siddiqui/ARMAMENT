@@ -15,12 +15,14 @@ import { timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { DockerClient } from "./docker.js";
 import { registerReadTools } from "./tools/read.js";
+import { registerWriteTools } from "./tools/write.js";
 
 const SERVER_INFO = { name: "sentinel-ops", version: "0.1.0" } as const;
 
 function buildMcpServer(docker: DockerClient): McpServer {
   const server = new McpServer(SERVER_INFO);
   registerReadTools(server, docker);
+  registerWriteTools(server, docker);
   return server;
 }
 
