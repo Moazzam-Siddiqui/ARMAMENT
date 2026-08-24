@@ -51,12 +51,18 @@ def main() -> int:
 
     app = create_app(config, docker)
 
-    log.info("listening on http://localhost:%d/mcp", config.port)
+    log.info("listening on http://%s:%d/mcp", config.host, config.port)
     log.info(
         "managing containers labelled %s=%s", config.label.key, config.label.value
     )
+    if config.host not in ("127.0.0.1", "localhost"):
+        log.warning(
+            "bound to %s: this port is reachable from the network and the bearer "
+            "token is the only control in front of it",
+            config.host,
+        )
 
-    uvicorn.run(app, host="127.0.0.1", port=config.port, log_level="warning")
+    uvicorn.run(app, host=config.host, port=config.port, log_level="warning")
     return 0
 
 

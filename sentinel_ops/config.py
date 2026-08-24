@@ -23,6 +23,7 @@ class Label:
 
 @dataclass(frozen=True)
 class Config:
+    host: str
     port: int
     auth_token: str
     label: Label
@@ -56,4 +57,12 @@ def load_config(env: dict[str, str] | None = None) -> Config:
 
     label_raw = (source.get("SENTINEL_LABEL") or "").strip() or "sentinel.managed=true"
 
-    return Config(port=port, auth_token=auth_token, label=_parse_label(label_raw))
+    # Loopback by default. Reaching this server from a container requires
+    # 0.0.0.0, which also exposes it to the local network -- the bearer token is
+    # then the only thing in front of container control, so the widening is left
+    # as a deliberate choice rather than a default.
+    host = (source.get("SENTINEL_HOST") or "").strip() or "127.0.0.1"
+
+    return Config(
+        host=host, port=port, auth_token=auth_token, label=_parse_label(label_raw)
+    )
