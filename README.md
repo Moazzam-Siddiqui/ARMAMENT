@@ -1,4 +1,4 @@
-# Agent Harness Using TrueForge
+# ARMAMENT
 
 An on-call incident response agent built on [TrueForge](https://trueforge.dev).
 
