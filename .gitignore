@@ -1,12 +1,13 @@
-# Dependencies
-node_modules/
-.pnp/
-.pnp.js
-
-# Build output
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
 dist/
 build/
-*.tsbuildinfo
 
 # Environment & secrets
 .env
@@ -15,16 +16,11 @@ build/
 *.pem
 *.key
 
-# TrueForge local state
-*.sqlite
-*.sqlite-journal
-.trueforge/
+# Audit log of state-changing actions
+sentinel-audit.log
 
 # Logs
 *.log
-npm-debug.log*
-pnpm-debug.log*
-yarn-error.log*
 
 # Editors / OS
 .vscode/
@@ -32,10 +28,6 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# Test & coverage
-coverage/
-.nyc_output/
-
-# Demo assets (large media — link instead)
+# Demo assets (large media - link instead)
 *.mov
 *.mp4

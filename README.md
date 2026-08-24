@@ -42,16 +42,36 @@ TrueForge harness
 
 ## Requirements
 
-Node.js >= 22.14 and a running Docker daemon.
+Python 3.11 or newer, and a running Docker daemon.
 
 ## Running it
 
 ```bash
-# Start the TrueForge harness (UI at http://localhost:8790)
-npx @truefoundry/trueforge@latest
+python -m venv .venv
+.venv/Scripts/activate          # Windows; use source .venv/bin/activate elsewhere
+pip install -e .
+
+cp .env.example .env            # then set SENTINEL_AUTH_TOKEN
+python -m sentinel_ops
 ```
 
-Setup for the MCP server and agent configuration is documented as it lands.
+The MCP endpoint is served at `http://localhost:8931/mcp` and requires the
+bearer token from `.env` on every request. `GET /healthz` is open and reports
+only whether the process is alive.
+
+Only containers labelled `sentinel.managed=true` are visible to the agent.
+Anything else cannot be listed, inspected, or acted on:
+
+```bash
+docker run -d --label sentinel.managed=true --name checkout-api ...
+```
+
+Start the TrueForge harness separately, then register this server under
+Settings -> Connectors with header auth:
+
+```bash
+npx @truefoundry/trueforge@latest   # UI at http://localhost:8790
+```
 
 ## Development
 
