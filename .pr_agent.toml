@@ -1,0 +1,27 @@
+# Qodo Merge configuration
+# Docs: https://docs.qodo.ai/code-review
+
+[github_app]
+# Run these automatically when a PR is opened.
+pr_commands = [
+    "/describe",
+    "/review",
+    "/improve",
+]
+
+[pr_reviewer]
+require_score_review = true
+require_tests_review = true
+require_security_review = true
+persistent_comment = true
+final_update_message = true
+num_code_suggestions = 4
+
+[pr_description]
+publish_labels = true
+add_original_user_description = true
+generate_ai_title = false
+
+[pr_code_suggestions]
+num_code_suggestions = 4
+suggestions_score_threshold = 5
