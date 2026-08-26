@@ -27,6 +27,7 @@ class Config:
     port: int
     auth_token: str
     label: Label
+    allowed_hosts: tuple[str, ...]
 
 
 def _parse_label(raw: str) -> Label:
@@ -63,6 +64,26 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     # as a deliberate choice rather than a default.
     host = (source.get("SENTINEL_HOST") or "").strip() or "127.0.0.1"
 
+    # The MCP SDK rejects requests whose Host header is not recognised, which
+    # guards against DNS rebinding. A containerised harness reaches this server
+    # as host.docker.internal, so that name has to be named explicitly -- the
+    # check cannot be satisfied by the bind address alone.
+    extra = [
+        entry.strip()
+        for entry in (source.get("SENTINEL_ALLOWED_HOSTS") or "").split(",")
+        if entry.strip()
+    ]
+    allowed = ["localhost", "127.0.0.1", "host.docker.internal", *extra]
+    # Every entry is accepted with or without the port, since clients differ in
+    # whether they include it.
+    allowed_hosts = tuple(
+        dict.fromkeys([h for entry in allowed for h in (entry, f"{entry}:{port}")])
+    )
+
     return Config(
-        host=host, port=port, auth_token=auth_token, label=_parse_label(label_raw)
+        host=host,
+        port=port,
+        auth_token=auth_token,
+        label=_parse_label(label_raw),
+        allowed_hosts=allowed_hosts,
     )

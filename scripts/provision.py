@@ -100,28 +100,55 @@ def _request(method: str, url: str, body: dict | None = None) -> tuple[int, str]
         ) from exc
 
 
-def _upsert(base: str, collection: str, name: str, manifest: dict) -> None:
-    """Create the resource, replacing any existing one with the same name.
+def _put_setting(api: str, collection: str, manifest: dict, label: str) -> None:
+    """Create or replace a settings resource.
 
-    The API exposes both a create and a create-or-replace form; this tries the
-    idempotent one first so re-running the script is not an error.
+    The settings endpoints take PUT against the collection with the name inside
+    the manifest, rather than against a per-name path, so re-running is not an
+    error.
     """
-    body = {"manifest": manifest}
-
-    status, text = _request("PUT", f"{base}/{collection}/{name}", body)
+    status, text = _request("PUT", f"{api}/settings/{collection}", {"manifest": manifest})
     if status in (200, 201, 204):
-        print(f"  ok    {collection}/{name}")
+        print(f"  ok    {label}")
         return
+    print(f"  FAIL  {label} -> HTTP {status}")
+    print(f"        {text[:500]}")
+    raise SystemExit(1)
 
-    # Older builds expose creation only as a POST against the collection.
-    if status in (404, 405):
-        status, text = _request("POST", f"{base}/{collection}", {"name": name, **body})
-        if status in (200, 201, 204):
-            print(f"  ok    {collection}/{name} (created)")
-            return
 
-    print(f"  FAIL  {collection}/{name} -> HTTP {status}")
-    print(f"        {text[:400]}")
+def _upsert_agent(api: str, name: str, manifest: dict) -> None:
+    """Create the agent, or replace it if one of that name already exists.
+
+    Agents are addressed by an immutable id rather than by name, so an existing
+    agent has to be looked up before it can be replaced.
+    """
+    status, text = _request("GET", f"{api}/agents")
+    existing_id = None
+    if status == 200:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            payload = {}
+        items = payload.get("data") if isinstance(payload, dict) else payload
+        for item in items or []:
+            if isinstance(item, dict) and item.get("name") == name:
+                existing_id = item.get("id") or item.get("agent_id")
+                break
+
+    if existing_id:
+        status, text = _request(
+            "PUT", f"{api}/agents/{existing_id}", {"name": name, "manifest": manifest}
+        )
+        verb = "replaced"
+    else:
+        status, text = _request("POST", f"{api}/agents", {"name": name, "manifest": manifest})
+        verb = "created"
+
+    if status in (200, 201, 204):
+        print(f"  ok    agents/{name} ({verb})")
+        return
+    print(f"  FAIL  agents/{name} -> HTTP {status}")
+    print(f"        {text[:500]}")
     raise SystemExit(1)
 
 
@@ -144,10 +171,9 @@ def main() -> int:
     print()
 
     print("model provider")
-    _upsert(
-        f"{api}/settings",
+    _put_setting(
+        api,
         "model-providers",
-        PROVIDER_NAME,
         {
             "type": "custom",
             "name": PROVIDER_NAME,
@@ -166,13 +192,13 @@ def main() -> int:
                 }
             ],
         },
+        f"model-providers/{PROVIDER_NAME}",
     )
 
     print("connector")
-    _upsert(
-        f"{api}/settings",
+    _put_setting(
+        api,
         "mcp-servers",
-        CONNECTOR_NAME,
         {
             "type": "remote",
             "name": CONNECTOR_NAME,
@@ -186,12 +212,12 @@ def main() -> int:
                 "headers": {"Authorization": f"Bearer {sentinel_token}"},
             },
         },
+        f"mcp-servers/{CONNECTOR_NAME}",
     )
 
     print("agent")
-    _upsert(
+    _upsert_agent(
         api,
-        "agents",
         AGENT_NAME,
         {
             "model": {

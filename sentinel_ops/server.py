@@ -12,6 +12,7 @@ from __future__ import annotations
 import secrets
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -79,6 +80,13 @@ def create_app(config: Config, docker: DockerClient) -> Starlette:
         streamable_http_path="/mcp",
         json_response=True,
         stateless_http=True,
+        # Left enabled, with the harness's own hostname named explicitly rather
+        # than the protection switched off.
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=list(config.allowed_hosts),
+            allowed_origins=["*"],
+        ),
     )
     app.router.routes.append(Route("/healthz", _healthz, methods=["GET"]))
     app.add_middleware(
