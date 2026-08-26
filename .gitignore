@@ -31,3 +31,6 @@ Thumbs.db
 # Demo assets (large media - link instead)
 *.mov
 *.mp4
+
+# Audit log of state-changing actions
+sentinel-audit.log
