@@ -13,6 +13,8 @@ Reads from .env (or the real environment, which wins):
 
     SENTINEL_AUTH_TOKEN   bearer token the harness sends to sentinel-ops
     GROQ_API_KEY          model provider credential
+    DAYTONA_API_KEY       sandbox provider credential; optional, and the agent
+                          runs without a sandbox when it is absent
     TRUEFORGE_URL         harness base URL      (default http://localhost:8791)
     SENTINEL_MCP_URL      how the harness reaches sentinel-ops
 """
@@ -32,6 +34,9 @@ from dotenv import load_dotenv
 # is the host as seen from inside.
 DEFAULT_MCP_URL = "http://host.docker.internal:8931/mcp"
 DEFAULT_TRUEFORGE_URL = "http://localhost:8791"
+# Groq is reached through scripts/groq_shim.py rather than directly; see the
+# note in main() for why.
+DEFAULT_GROQ_BASE_URL = "http://host.docker.internal:8932/v1"
 
 PROVIDER_NAME = "groq"
 MODEL_NAME = "gpt-oss-120b"
@@ -65,9 +70,13 @@ How to work:
 4. Restarting destroys evidence held in memory. Gather what you need from the
    logs first.
 
-5. Every destructive action needs human approval, and your stated reason is
-   shown to the person deciding. Write it for them: what you saw, and why this
-   action follows from it. Not "restarting to fix the error".
+5. Do not ask for permission before a destructive action, and do not offer the
+   user a choice of what to do. Call the tool. Approval is enforced outside you:
+   the call pauses and a human sees the tool name, the arguments and your
+   reason, then allows or denies it. Asking first only adds a step.
+
+   Your reason is what that person reads. Write it for them: what you saw, and
+   why this action follows from it. Not "restarting to fix the error".
 
 6. After an approved action, verify. Re-check health, and read the logs again
    for startup errors. Do not report an incident resolved on the strength of
@@ -81,6 +90,19 @@ You only see services that are explicitly placed in your care. If a service is
 not in list_services, it is not yours to touch, and you should say so rather
 than looking for another way to reach it.
 """
+
+
+def _use_utf8_output() -> None:
+    """Stop Windows' legacy console encoding from turning an error into a crash.
+
+    API error messages contain non-ASCII characters, and the default cp1252
+    console cannot encode them, so printing a failure raised instead of
+    reporting it.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def _request(method: str, url: str, body: dict | None = None) -> tuple[int, str]:
@@ -136,8 +158,10 @@ def _upsert_agent(api: str, name: str, manifest: dict) -> None:
                 break
 
     if existing_id:
+        # Replace takes the manifest alone; the name is fixed at creation and
+        # is rejected as an unrecognised key here.
         status, text = _request(
-            "PUT", f"{api}/agents/{existing_id}", {"name": name, "manifest": manifest}
+            "PUT", f"{api}/agents/{existing_id}", {"manifest": manifest}
         )
         verb = "replaced"
     else:
@@ -153,6 +177,7 @@ def _upsert_agent(api: str, name: str, manifest: dict) -> None:
 
 
 def main() -> int:
+    _use_utf8_output()
     load_dotenv(override=False)
 
     sentinel_token = (os.environ.get("SENTINEL_AUTH_TOKEN") or "").strip()
@@ -168,6 +193,13 @@ def main() -> int:
 
     print(f"harness      {base}")
     print(f"sentinel-ops {mcp_url}")
+
+    # The harness replays the model's reasoning back to the provider, and Groq
+    # rejects it, which breaks the second step of every tool loop. Requests go
+    # through scripts/groq_shim.py, which strips that one field on the way out.
+    # Set GROQ_BASE_URL to https://api.groq.com/openai/v1 to bypass the shim.
+    groq_base_url = os.environ.get("GROQ_BASE_URL") or DEFAULT_GROQ_BASE_URL
+    print(f"groq via     {groq_base_url}")
     print()
 
     print("model provider")
@@ -179,15 +211,20 @@ def main() -> int:
             "name": PROVIDER_NAME,
             # Groq speaks the OpenAI wire format, so it registers as a custom
             # endpoint rather than needing a dedicated provider type.
-            "base_url": "https://api.groq.com/openai/v1",
+            "base_url": groq_base_url,
             "auth": {"api_key": groq_key},
             "models": [
                 {
                     "name": MODEL_NAME,
                     "model_id": "openai/gpt-oss-120b",
                     "properties": {
+                        # Well under the model's real ceiling. Groq charges the
+                        # reserved output against the per-minute token budget
+                        # before a single token is generated, so declaring the
+                        # full 32k made every request exceed the free tier's
+                        # 8k limit on its own.
                         "context_length": 131072,
-                        "max_output_tokens": 32768,
+                        "max_output_tokens": 2048,
                     },
                 }
             ],
@@ -215,6 +252,31 @@ def main() -> int:
         f"mcp-servers/{CONNECTOR_NAME}",
     )
 
+    # Optional. Daytona is the only sandbox provider the harness offers, and
+    # enabling the sandbox without one configured fails at run time rather than
+    # at startup, so the agent is only given one when a key is present.
+    daytona_key = (os.environ.get("DAYTONA_API_KEY") or "").strip()
+    if daytona_key:
+        print("sandbox")
+        _put_setting(
+            api,
+            "sandbox-providers",
+            {
+                "type": "daytona",
+                "auth": {"api_key": daytona_key},
+                "exec_timeout_ms": 60000,
+                # Idle sandboxes stop after five minutes. An incident session is
+                # bursty, and a stopped sandbox costs nothing.
+                "auto_stop_interval_in_minutes": 5,
+                "auto_archive_interval_in_minutes": 60,
+                "auto_delete_interval_in_minutes": 7200,
+            },
+            "sandbox-providers/daytona",
+        )
+    else:
+        print("sandbox")
+        print("  skip  no DAYTONA_API_KEY set; agent will run without a sandbox")
+
     print("agent")
     _upsert_agent(
         api,
@@ -227,6 +289,10 @@ def main() -> int:
                     # not creative.
                     "temperature": 0.2,
                     "parallel_tool_calls": True,
+                    # Same reason as max_output_tokens above: this is the figure
+                    # actually sent, and it is counted against the rate limit up
+                    # front. Tool calls and short prose fit comfortably.
+                    "max_tokens": 2048,
                 },
             },
             "instructions": INSTRUCTIONS,
@@ -238,14 +304,20 @@ def main() -> int:
                     # against the destructive annotations the connector reports,
                     # so the connector's own honesty is what arms it.
                     "require_approval_for_tools": ["@destructive"],
+                    # Preloaded. Fetching schemas on demand cost more than it
+                    # saved: the model spent several turns re-reading tool info
+                    # and still guessed parameter names that do not exist
+                    # (service_id for service, query for contains). Seven
+                    # schemas up front is cheaper than that.
                     "preload": True,
                 }
             ],
             "config": {
-                # No sandbox provider is configured yet; enabling it without one
-                # fails at run time rather than at startup.
-                "sandbox": {"enabled": False},
+                "sandbox": {"enabled": bool(daytona_key)},
                 "ask_user_questions": {"enabled": True},
+                # Streamed React components carry a large instruction block that
+                # this agent has no use for: its output is prose and tool calls.
+                "generative_ui": {"enabled": False},
                 # A single incident should not fan out into parallel agents
                 # touching the same services.
                 "dynamic_sub_agents": {"enabled": False},
@@ -255,6 +327,11 @@ def main() -> int:
     )
 
     print()
+    if not daytona_key:
+        print("Note: no sandbox. The agent can investigate and remediate, but")
+        print("cannot write and run its own analysis code. Set DAYTONA_API_KEY")
+        print("and re-run to enable it.")
+        print()
     print(f"Done. Open {base} and start a session with the '{AGENT_NAME}' agent.")
     return 0
 

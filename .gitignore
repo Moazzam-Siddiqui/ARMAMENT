@@ -34,3 +34,7 @@ Thumbs.db
 
 # Audit log of state-changing actions
 sentinel-audit.log
+
+# Scratch files from poking the API by hand
+*.tmp
+turn.json
