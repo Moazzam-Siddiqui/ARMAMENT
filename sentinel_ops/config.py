@@ -1,0 +1,89 @@
+"""Process configuration, read once at startup.
+
+Everything here is validated eagerly so the server refuses to boot in a
+misconfigured state rather than failing open on the first agent request.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Label:
+    """The Docker label that marks a container as this agent's responsibility."""
+
+    key: str
+    value: str
+
+    def as_filter(self) -> str:
+        return f"{self.key}={self.value}"
+
+
+@dataclass(frozen=True)
+class Config:
+    host: str
+    port: int
+    auth_token: str
+    label: Label
+    allowed_hosts: tuple[str, ...]
+
+
+def _parse_label(raw: str) -> Label:
+    key, separator, value = raw.partition("=")
+    if not separator or not key or not value:
+        raise ValueError(f'SENTINEL_LABEL must look like "key=value", received "{raw}"')
+    return Label(key=key, value=value)
+
+
+def load_config(env: dict[str, str] | None = None) -> Config:
+    source = os.environ if env is None else env
+
+    auth_token = (source.get("SENTINEL_AUTH_TOKEN") or "").strip()
+    if not auth_token:
+        raise ValueError(
+            "SENTINEL_AUTH_TOKEN is required. An unauthenticated server would let "
+            "anything on the network restart your containers. Copy .env.example "
+            "to .env and set a token."
+        )
+
+    raw_port = source.get("PORT") or "8931"
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise ValueError(f'PORT must be an integer, got "{raw_port}"') from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"PORT must be between 1 and 65535, got {port}")
+
+    label_raw = (source.get("SENTINEL_LABEL") or "").strip() or "sentinel.managed=true"
+
+    # Loopback by default. Reaching this server from a container requires
+    # 0.0.0.0, which also exposes it to the local network -- the bearer token is
+    # then the only thing in front of container control, so the widening is left
+    # as a deliberate choice rather than a default.
+    host = (source.get("SENTINEL_HOST") or "").strip() or "127.0.0.1"
+
+    # The MCP SDK rejects requests whose Host header is not recognised, which
+    # guards against DNS rebinding. A containerised harness reaches this server
+    # as host.docker.internal, so that name has to be named explicitly -- the
+    # check cannot be satisfied by the bind address alone.
+    extra = [
+        entry.strip()
+        for entry in (source.get("SENTINEL_ALLOWED_HOSTS") or "").split(",")
+        if entry.strip()
+    ]
+    allowed = ["localhost", "127.0.0.1", "host.docker.internal", *extra]
+    # Every entry is accepted with or without the port, since clients differ in
+    # whether they include it.
+    allowed_hosts = tuple(
+        dict.fromkeys([h for entry in allowed for h in (entry, f"{entry}:{port}")])
+    )
+
+    return Config(
+        host=host,
+        port=port,
+        auth_token=auth_token,
+        label=_parse_label(label_raw),
+        allowed_hosts=allowed_hosts,
+    )
