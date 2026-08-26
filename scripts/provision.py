@@ -13,6 +13,8 @@ Reads from .env (or the real environment, which wins):
 
     SENTINEL_AUTH_TOKEN   bearer token the harness sends to sentinel-ops
     GROQ_API_KEY          model provider credential
+    DAYTONA_API_KEY       sandbox provider credential; optional, and the agent
+                          runs without a sandbox when it is absent
     TRUEFORGE_URL         harness base URL      (default http://localhost:8791)
     SENTINEL_MCP_URL      how the harness reaches sentinel-ops
 """
@@ -250,6 +252,31 @@ def main() -> int:
         f"mcp-servers/{CONNECTOR_NAME}",
     )
 
+    # Optional. Daytona is the only sandbox provider the harness offers, and
+    # enabling the sandbox without one configured fails at run time rather than
+    # at startup, so the agent is only given one when a key is present.
+    daytona_key = (os.environ.get("DAYTONA_API_KEY") or "").strip()
+    if daytona_key:
+        print("sandbox")
+        _put_setting(
+            api,
+            "sandbox-providers",
+            {
+                "type": "daytona",
+                "auth": {"api_key": daytona_key},
+                "exec_timeout_ms": 60000,
+                # Idle sandboxes stop after five minutes. An incident session is
+                # bursty, and a stopped sandbox costs nothing.
+                "auto_stop_interval_in_minutes": 5,
+                "auto_archive_interval_in_minutes": 60,
+                "auto_delete_interval_in_minutes": 7200,
+            },
+            "sandbox-providers/daytona",
+        )
+    else:
+        print("sandbox")
+        print("  skip  no DAYTONA_API_KEY set; agent will run without a sandbox")
+
     print("agent")
     _upsert_agent(
         api,
@@ -286,9 +313,7 @@ def main() -> int:
                 }
             ],
             "config": {
-                # No sandbox provider is configured yet; enabling it without one
-                # fails at run time rather than at startup.
-                "sandbox": {"enabled": False},
+                "sandbox": {"enabled": bool(daytona_key)},
                 "ask_user_questions": {"enabled": True},
                 # Streamed React components carry a large instruction block that
                 # this agent has no use for: its output is prose and tool calls.
@@ -302,6 +327,11 @@ def main() -> int:
     )
 
     print()
+    if not daytona_key:
+        print("Note: no sandbox. The agent can investigate and remediate, but")
+        print("cannot write and run its own analysis code. Set DAYTONA_API_KEY")
+        print("and re-run to enable it.")
+        print()
     print(f"Done. Open {base} and start a session with the '{AGENT_NAME}' agent.")
     return 0
 
