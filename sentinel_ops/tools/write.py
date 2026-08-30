@@ -19,7 +19,7 @@ from typing import Annotated
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from ..audit import record
 from ..docker_client import DockerClient
@@ -33,10 +33,13 @@ DESTRUCTIVE = ToolAnnotations(
 
 ServiceName = Annotated[str, Field(description="Name of the managed service", min_length=1)]
 
+# Stripped before the length is checked: ten spaces satisfied a bare
+# min_length and reached the approver as an empty justification, which is worse
+# than no requirement at all because it looks like one was met.
 Reason = Annotated[
     str,
+    StringConstraints(strip_whitespace=True, min_length=10),
     Field(
-        min_length=10,
         description=(
             "Why this action is needed, based on evidence you gathered. Shown to "
             "the human approving it and written to the audit log."

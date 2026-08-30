@@ -288,6 +288,11 @@ def main() -> int:
                     # Low but not zero: incident triage should be repeatable,
                     # not creative.
                     "temperature": 0.2,
+                    # Parallel calls speed up triage, where several read-only
+                    # lookups are independent. It is safe for destructive calls
+                    # too because the connector serialises state changes per
+                    # service and re-resolves the container inside that lock,
+                    # rather than relying on the model to order them.
                     "parallel_tool_calls": True,
                     # Same reason as max_output_tokens above: this is the figure
                     # actually sent, and it is counted against the rate limit up
