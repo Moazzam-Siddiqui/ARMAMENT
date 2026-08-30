@@ -158,8 +158,19 @@ async def proxy(request: Request) -> Response:
             break
 
         # Read and close before waiting, so the connection is not held open
-        # across the pause.
-        error_body = (await upstream.aread()).decode(errors="replace")
+        # across the pause. The read can itself fail if Groq drops the
+        # connection while returning the 429, which would otherwise escape as an
+        # unhandled 500 and leak the client.
+        try:
+            error_body = (await upstream.aread()).decode(errors="replace")
+        except httpx.HTTPError as exc:
+            await upstream.aclose()
+            await client.aclose()
+            log.error("reading rate-limit response failed: %s", exc)
+            return JSONResponse(
+                {"error": {"message": f"Cannot reach Groq: {exc}", "type": "upstream_error"}},
+                status_code=502,
+            )
         await upstream.aclose()
         delay = retry_delay(upstream, error_body)
         log.warning(

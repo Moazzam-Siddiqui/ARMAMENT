@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import docker
-from docker.errors import DockerException
+from docker.errors import APIError, DockerException, NotFound
 from docker.models.containers import Container
 
 from .config import Config
@@ -96,6 +96,34 @@ class DockerClient:
     def __init__(self, config: Config) -> None:
         self._client = docker.from_env()
         self._label = config.label
+        # One lock per service. Two destructive calls on the same container can
+        # otherwise interleave -- a rollback removing it while a restart is
+        # mid-flight -- and leave the service in a state neither call intended.
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, name: str) -> asyncio.Lock:
+        """The lock guarding state changes to one service.
+
+        Keyed on the normalised name so "checkout-api" and "/checkout-api"
+        cannot each take a different lock for the same container.
+        """
+        key = _strip_slash(name).lower()
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        return lock
+
+    def _force_remove_by_name(self, name: str) -> None:
+        """Remove a container by name, tolerating its absence.
+
+        Used to clear a half-built replacement before a fallback rebuild, since
+        a container that was created but failed to start still holds the name.
+        """
+        try:
+            self._client.api.remove_container(name, force=True)
+        except (NotFound, APIError):
+            pass
 
     async def ping(self) -> None:
         """Verify the daemon is reachable, so startup fails loudly, not per-request."""
@@ -203,8 +231,11 @@ class DockerClient:
 
     async def restart(self, name: str, timeout: int = 10) -> None:
         """Restart a service in place. Config and image are unchanged."""
-        container = await self.resolve(name)
-        await asyncio.to_thread(lambda: container.restart(timeout=timeout))
+        async with self._lock_for(name):
+            # Resolved inside the lock: a concurrent rollback may have rebuilt
+            # this service since the call was issued.
+            container = await self.resolve(name)
+            await asyncio.to_thread(lambda: container.restart(timeout=timeout))
 
     async def set_memory_limit(self, name: str, megabytes: int) -> float | None:
         """Raise the memory ceiling of a running service.
@@ -215,14 +246,15 @@ class DockerClient:
 
         Returns the previous limit in MB, or None if it was unlimited.
         """
-        container = await self.resolve(name)
-        previous = container.attrs["HostConfig"].get("Memory") or 0
-        limit = f"{megabytes}m"
+        async with self._lock_for(name):
+            container = await self.resolve(name)
+            previous = container.attrs["HostConfig"].get("Memory") or 0
+            limit = f"{megabytes}m"
 
-        await asyncio.to_thread(
-            lambda: container.update(mem_limit=limit, memswap_limit=limit)
-        )
-        return _round(previous / 1024 / 1024) if previous else None
+            await asyncio.to_thread(
+                lambda: container.update(mem_limit=limit, memswap_limit=limit)
+            )
+            return _round(previous / 1024 / 1024) if previous else None
 
     async def recreate_with_image(self, name: str, image: str) -> str:
         """Replace a service with the same configuration on a different image tag.
@@ -232,10 +264,16 @@ class DockerClient:
         here, and it is ordered accordingly: the replacement image is verified
         present before anything is torn down, and a failed rebuild is retried
         once on the original image so a bad tag cannot leave the service simply
-        gone.
+        gone. A rebuild that got as far as creating a container is cleared
+        first, because that container still holds the service name and would
+        make the fallback fail on a name conflict.
 
         Returns the image that was replaced.
         """
+        async with self._lock_for(name):
+            return await self._recreate_locked(name, image)
+
+    async def _recreate_locked(self, name: str, image: str) -> str:
         container = await self.resolve(name)
         info = container.attrs
         previous_image = info["Config"]["Image"]
@@ -288,9 +326,17 @@ class DockerClient:
         await asyncio.to_thread(lambda: container.stop(timeout=10))
         await asyncio.to_thread(lambda: container.remove(force=True))
 
+        service_name = _strip_slash(info["Name"])
+
         try:
             await asyncio.to_thread(lambda: rebuild(image))
         except (DockerException, OSError) as exc:
+            # The failure may have come from start rather than create, in which
+            # case a container on the new image already holds the name. Left in
+            # place it turns the fallback into a name conflict, so the service
+            # would stay down on the very path meant to save it.
+            await asyncio.to_thread(lambda: self._force_remove_by_name(service_name))
+
             try:
                 await asyncio.to_thread(lambda: rebuild(previous_image))
                 restored = True
