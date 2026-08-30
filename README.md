@@ -26,6 +26,15 @@ restart_service      ⏸  PAUSED — waiting for a human
 
 Everything above the pause is automatic. The pause is the point.
 
+## Documentation
+
+| | |
+|---|---|
+| [docs/setup.md](docs/setup.md) | From an empty machine to a working agent |
+| [docs/architecture.md](docs/architecture.md) | How the pieces fit, and which one is the AI |
+| [docs/tools.md](docs/tools.md) | All seven tools, their arguments and their risks |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Every failure hit while building this, and its fix |
+
 ## Design
 
 **Real systems, not mocks.** The agent reaches live infrastructure through an
@@ -80,81 +89,33 @@ tier allows 8k tokens per minute and one investigation costs several times that
 across its steps, so the shim waits the interval Groq names and retries rather
 than letting the turn die mid-loop.
 
-## Requirements
+## Running it
 
-- Python 3.11 or newer
-- A running Docker daemon
-- A [Groq](https://console.groq.com) API key
-- A [Daytona](https://app.daytona.io) API key, for the sandbox — optional, but
-  without it the agent cannot run code it writes
-
-## Setup
+Full instructions, including the Daytona scopes and the Docker override the
+harness needs, are in [docs/setup.md](docs/setup.md). In outline:
 
 ```bash
-python -m venv .venv
-.venv/Scripts/activate          # Windows; use source .venv/bin/activate elsewhere
-pip install -e .
+# once
+python -m venv .venv && .venv/Scripts/activate && pip install -e .
+cp .env.example .env                 # then fill in the keys
 
-cp .env.example .env            # then fill in the keys
-```
+# the harness, in its own checkout of trueforge
+docker compose up --build -d         # with HOST: 0.0.0.0 overridden
 
-The Daytona key needs the scopes `write:sandboxes`, `delete:sandboxes`,
-`write:snapshots` and `delete:snapshots`, and the organisation needs a default
-region set, or registering the provider fails.
+# this project, one terminal each
+python -m sentinel_ops               # MCP server on :8931
+python scripts/groq_shim.py          # model shim on :8932
 
-### Start the harness
-
-TrueForge does not run natively on Windows (its server fails to start on an ESM
-path, and its local sandbox is macOS/Linux only), so it runs in Docker:
-
-```bash
-git clone https://github.com/truefoundry/trueforge && cd trueforge
-cp packages/trueforge/.env.example packages/trueforge/.env
-docker compose up --build -d
-```
-
-Add a `docker-compose.override.yml` alongside it, or the server binds loopback
-inside the container and the published port answers with nothing:
-
-```yaml
-services:
-  server:
-    environment:
-      HOST: 0.0.0.0
-```
-
-The harness is then on `http://localhost:8791`.
-
-### Start this project
-
-Two processes, each in its own terminal:
-
-```bash
-python -m sentinel_ops       # MCP server on :8931
-python scripts/groq_shim.py  # model shim on :8932
-```
-
-`SENTINEL_HOST` must be `0.0.0.0` for a containerised harness to reach the MCP
-server: inside the container, loopback is the container itself. That also
-exposes the port to the local network, where the bearer token is the only
-control in front of container restarts, so it is opt-in and warns when set.
-
-### Configure the agent
-
-```bash
+# configure the agent; safe to re-run
 python scripts/provision.py
 ```
 
-This registers the model provider, the connector, the sandbox and the agent
-through TrueForge's API. It is written as a script rather than documented as a
-click-path so the configuration is reviewable and reproducible, and it is safe
-to re-run.
+Then open <http://localhost:8791>, start a session with the `sentinel` agent,
+and give it something real:
 
-Then open `http://localhost:8791` and start a session with the `sentinel` agent.
+> checkout-api is throwing errors. Investigate and fix it.
 
-### Give it something to look at
-
-Only labelled containers are visible:
+Only containers labelled `sentinel.managed=true` are visible to it:
 
 ```bash
 docker run -d --label sentinel.managed=true --name checkout-api \
