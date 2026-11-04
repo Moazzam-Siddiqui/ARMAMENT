@@ -1,28 +1,45 @@
-"""Append-only record of every state-changing action.
-
-The harness gates these actions on human approval, but the gate lives outside
-this process and leaves no trace here. This log is the server's own account of
-what it was asked to do and what happened, written from inside the code path
-that performs the work so nothing can act without being recorded.
-"""
-
+"""Append-only, size-bounded record of every state-changing action."""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 log = logging.getLogger("sentinel-ops")
+_write_lock = threading.Lock()
+MAX_BYTES = 10 * 1024 * 1024
+BACKUP_COUNT = 5
 
-LOG_PATH = Path.cwd() / "sentinel-audit.log"
+
+def _audit_path() -> Path:
+    return Path(os.environ.get("ARMAMENT_AUDIT_LOG", "sentinel-audit.log"))
+
+
+def _rotate(path: Path) -> None:
+    if not path.exists() or path.stat().st_size < MAX_BYTES:
+        return
+    oldest = path.with_name(path.name + f".{BACKUP_COUNT}")
+    oldest.unlink(missing_ok=True)
+    for index in range(BACKUP_COUNT - 1, 0, -1):
+        source = path.with_name(path.name + f".{index}")
+        if source.exists():
+            source.replace(path.with_name(path.name + f".{index + 1}"))
+    path.replace(path.with_name(path.name + ".1"))
 
 
 def _append(line: str) -> None:
-    with LOG_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
+    path = _audit_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _write_lock:
+        _rotate(path)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
 
 
 async def record(
@@ -33,12 +50,7 @@ async def record(
     detail: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
-    """Write one JSON line describing an attempted action.
-
-    Logging failures are reported but never raised: losing an audit line must
-    not turn a successful remediation into a reported failure, which would push
-    the agent into retrying an action that already happened.
-    """
+    """Write one JSON line. Logging failure never triggers an unsafe retry."""
     entry: dict[str, Any] = {
         "at": datetime.now(timezone.utc).isoformat(),
         "action": action,
