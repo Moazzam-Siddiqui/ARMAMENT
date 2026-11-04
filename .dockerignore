@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.env
+.env.*
+!.env.example
+sentinel-audit.log
+*.log
+tests
+dist
+build
