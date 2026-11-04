@@ -87,8 +87,11 @@ curl http://localhost:8791/healthz
 ```
 
 These endpoints prove process liveness, not that a full model/tool/approval
-workflow works. Complete a disposable-container smoke test before connecting
-any real workload.
+workflow works. Open http://localhost:8931/dashboard and enter the
+SENTINEL_AUTH_TOKEN from your private .env to inspect the managed-service
+inventory and recent remediation audit. The dashboard is read-only; approval
+prompts and remediation remain in the TrueForge UI. Complete a disposable-
+container smoke test before connecting any real workload.
 
 ## 6. Run a disposable test workload
 
