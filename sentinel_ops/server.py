@@ -187,7 +187,19 @@ async def _healthz(_request: Request) -> JSONResponse:
 
 
 async def _dashboard(_request: Request) -> HTMLResponse:
-    return HTMLResponse(DASHBOARD_HTML)
+    return HTMLResponse(
+        DASHBOARD_HTML,
+        headers={
+            "Content-Security-Policy": (
+                "default-src 'none'; style-src 'unsafe-inline'; "
+                "script-src 'unsafe-inline'; connect-src 'self'; "
+                "base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def create_app(config: Config, docker: DockerClient) -> Starlette:
