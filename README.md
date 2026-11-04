@@ -33,18 +33,19 @@ cd ARMAMENT
 python scripts/bootstrap.py
 ```
 
-The bootstrap prompts for credentials without echoing them, generates a random
-MCP bearer token, creates a private .env without overwriting an existing one,
-builds the containers, and waits for both local health endpoints.
+The bootstrap creates a virtual environment, installs the Python package,
+prompts for credentials without echoing them, generates a random MCP bearer
+token, creates a private .env without overwriting an existing one, builds the
+containers, and waits for both local health endpoints.
 
-Then install/start TrueForge separately and provision the agent:
+Then install/start TrueForge separately and provision the agent using the
+created environment:
 
 ```bash
-python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# macOS/Linux: source .venv/bin/activate
-python -m pip install -e .
-python scripts/provision.py
+# Windows PowerShell
+.venv\\Scripts\\python.exe scripts/provision.py
+# macOS/Linux
+.venv/bin/python scripts/provision.py
 ```
 
 Open http://localhost:8791 and start a session with the sentinel agent. Follow
