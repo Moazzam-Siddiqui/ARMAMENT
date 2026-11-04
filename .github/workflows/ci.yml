@@ -36,3 +36,19 @@ jobs:
           docker compose config --quiet
       - name: Build ARMAMENT container image
         run: docker build --tag armament:ci .
+
+  docker-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest
+      - name: Verify Docker Engine
+        run: docker info
+      - name: Test real Docker management-label isolation
+        run: python -m pytest -m integration -q
