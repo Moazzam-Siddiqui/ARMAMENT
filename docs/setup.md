@@ -19,11 +19,12 @@ cd ARMAMENT
 python scripts/bootstrap.py
 ```
 
-The setup script verifies Docker Compose, prompts for credentials without
-echoing them, generates a high-entropy MCP bearer token, writes .env with
-restrictive permissions where supported, builds the two ARMAMENT containers,
-and waits for their health endpoints. It refuses to overwrite an existing
-.env.
+The setup script verifies Docker Compose, creates a local Python virtual
+environment and installs the provisioning package, prompts for credentials
+without echoing them, generates a high-entropy MCP bearer token, writes .env
+with restrictive permissions where supported, builds the two ARMAMENT
+containers, and waits for their health endpoints. It refuses to overwrite an
+existing .env.
 
 ## 2. Network and Docker permissions
 
@@ -64,16 +65,11 @@ outside the ARMAMENT repository.
 
 ## 4. Provision the agent
 
-Create and activate a Python virtual environment, then install the project:
-
 ```bash
-python -m venv .venv
-# Windows PowerShell:
-.venv\\Scripts\\Activate.ps1
-# macOS/Linux:
-# source .venv/bin/activate
-python -m pip install -e .
-python scripts/provision.py
+# Windows PowerShell
+.venv\\Scripts\\python.exe scripts/provision.py
+# macOS/Linux
+.venv/bin/python scripts/provision.py
 ```
 
 The provisioning script reads GROQ_API_KEY and optional DAYTONA_API_KEY from
