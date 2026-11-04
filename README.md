@@ -48,8 +48,13 @@ created environment:
 .venv/bin/python scripts/provision.py
 ```
 
-Open http://localhost:8791 and start a session with the sentinel agent. Follow
-the full docs/setup.md, docs/architecture.md, docs/tools.md, and
+Open http://localhost:8791 and start a session with the sentinel agent.
+The read-only ARMAMENT operations dashboard is at
+http://localhost:8931/dashboard. Enter the SENTINEL_AUTH_TOKEN from your
+private .env to view managed services and recent remediation audit events.
+Approvals and remediation actions remain in the TrueForge UI.
+
+Follow the full docs/setup.md, docs/architecture.md, docs/tools.md, and
 docs/troubleshooting.md guides.
 
 ## Safety boundaries
