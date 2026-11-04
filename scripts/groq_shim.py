@@ -87,7 +87,7 @@ def sanitise(body: bytes) -> tuple[bytes, int]:
 
     removed = 0
     for message in messages:
-        if not isinstance(message, dict):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
         for key in STRIPPED_MESSAGE_KEYS:
             if key in message:
