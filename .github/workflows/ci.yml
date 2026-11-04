@@ -30,3 +30,9 @@ jobs:
         run: ruff check .
       - name: Test
         run: python -m pytest -q
+      - name: Validate Compose configuration
+        run: |
+          printf 'SENTINEL_AUTH_TOKEN=ci-test-token\n' > .env
+          docker compose config --quiet
+      - name: Build ARMAMENT container image
+        run: docker build --tag armament:ci .
