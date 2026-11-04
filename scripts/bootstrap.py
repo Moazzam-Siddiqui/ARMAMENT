@@ -49,6 +49,14 @@ def main() -> int:
         )
 
     compose = _docker_compose()
+    print(
+        "\\nSecurity notice: ARMAMENT needs ports 8931 and 8932 reachable from "
+        "your TrueForge container. The default publishes them on all host "
+        "interfaces. Restrict both ports with your host firewall; never expose "
+        "them to the public internet."
+    )
+    if input("Have you restricted access to these ports? [y/N]: ").strip().lower() not in {"y", "yes"}:
+        raise SystemExit("Setup cancelled. Configure host firewall access before continuing.")
     groq_key = getpass.getpass("Groq API key (input hidden): ").strip()
     if not groq_key:
         raise SystemExit("A Groq API key is required.")
