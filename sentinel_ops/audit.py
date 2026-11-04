@@ -69,3 +69,22 @@ async def record(
     except OSError as exc:
         log.error("audit write failed: %s", exc)
     log.info("%s", line)
+
+
+def recent_events(limit: int = 100) -> list[dict[str, Any]]:
+    """Return the newest audit entries from the active log, newest first."""
+    if not 1 <= limit <= 500:
+        raise ValueError("limit must be between 1 and 500")
+    path = _audit_path()
+    if not path.is_file():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
+    events: list[dict[str, Any]] = []
+    for line in reversed(lines):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
