@@ -2,7 +2,7 @@ import json
 
 import httpx
 
-from scripts.groq_shim import sanitise, retry_delay
+from scripts.groq_shim import retry_delay, sanitise
 
 
 def test_sanitise_removes_reasoning_metadata_from_assistant_messages() -> None:
