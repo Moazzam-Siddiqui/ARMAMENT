@@ -30,3 +30,16 @@ def test_audit_rotation_keeps_bounded_backups(tmp_path, monkeypatch):
     assert path.read_text(encoding="utf-8") == "ABCDEFGH\n"
     assert path.with_name("audit.jsonl.1").read_text(encoding="utf-8") == "abcdefgh\n"
     assert path.with_name("audit.jsonl.2").read_text(encoding="utf-8") == "12345678\n"
+
+
+def test_recent_events_returns_newest_first_and_enforces_limit(tmp_path, monkeypatch):
+    path = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("ARMAMENT_AUDIT_LOG", str(path))
+    audit._append(json.dumps({"action": "first"}))
+    audit._append(json.dumps({"action": "second"}))
+
+    assert [event["action"] for event in audit.recent_events(1)] == ["second"]
+    assert [event["action"] for event in audit.recent_events(2)] == [
+        "second",
+        "first",
+    ]
