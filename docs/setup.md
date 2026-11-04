@@ -123,6 +123,39 @@ The named armament-audit volume persists the local JSONL audit log. It rotates
 at 10 MiB and retains five backups. This is not tamper-proof centralized audit
 storage.
 
+## 8. Upgrade and uninstall
+
+To update to the latest branch revision:
+
+```bash
+git pull
+docker compose up --build -d
+```
+
+Re-run provisioning with the virtual-environment Python if the model, tools, or
+configuration changed:
+
+```bash
+# Windows PowerShell
+.venv\\Scripts\\python.exe scripts/provision.py
+# macOS/Linux
+.venv/bin/python scripts/provision.py
+```
+
+To stop ARMAMENT while preserving its audit volume:
+
+```bash
+docker compose down
+```
+
+To remove the containers and permanently delete the named audit volume:
+
+```bash
+docker compose down -v
+```
+
+Back up the audit volume before deleting it if those records are needed.
+
 ## Troubleshooting
 
 - Docker unavailable: start Docker Desktop/Engine and run docker compose version.
