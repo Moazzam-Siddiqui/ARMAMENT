@@ -1,205 +1,137 @@
 # Setup
 
-From an empty machine to a working agent. Every step here has been run on
-Windows 11 with Docker Desktop; the differences elsewhere are noted.
+This guide installs ARMAMENT's local services from a fresh clone. The TrueForge
+agent harness remains a separate dependency and must be installed separately.
 
-## What you need first
+## Requirements
 
-- **Python 3.11 or newer**
-- **Docker**, running
-- **A Groq API key** — free, from [console.groq.com](https://console.groq.com)
-- **A Daytona API key** — optional, for the sandbox; free tier at
-  [app.daytona.io](https://app.daytona.io)
+- Docker Engine/Desktop with Docker Compose v2
+- Python 3.11+ (for the provisioning script)
+- Groq API key
+- TrueForge harness, running on the same host
+- Optional Daytona API key if you want sandboxed code execution
 
-## 1. Install this project
+## 1. Install ARMAMENT
 
 ```bash
 git clone https://github.com/Moazzam-Siddiqui/ARMAMENT
 cd ARMAMENT
-
-python -m venv .venv
-.venv/Scripts/activate          # Windows
-# source .venv/bin/activate     # macOS / Linux
-
-pip install -e .
+python scripts/bootstrap.py
 ```
 
-## 2. Fill in the settings
+The setup script verifies Docker Compose, prompts for credentials without
+echoing them, generates a high-entropy MCP bearer token, writes .env with
+restrictive permissions where supported, builds the two ARMAMENT containers,
+and waits for their health endpoints. It refuses to overwrite an existing
+.env.
 
-```bash
-cp .env.example .env
-```
+## 2. Network and Docker permissions
 
-Open `.env` and set:
+The compose stack publishes ports 8931 (MCP) and 8932 (Groq shim) on the host
+because the TrueForge harness runs in its own container and reaches these
+services through host.docker.internal. The default bootstrap binds to all host
+interfaces. Restrict both ports using your host firewall to the TrueForge
+container/host and trusted operator machines. Do not expose them to the public
+internet.
 
-| Setting | Value |
-|---|---|
-| `SENTINEL_AUTH_TOKEN` | Any long random string. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `SENTINEL_HOST` | `0.0.0.0` — required, see below |
-| `GROQ_API_KEY` | From the Groq console |
-| `DAYTONA_API_KEY` | From Daytona, optional |
+The sentinel-ops container mounts the Docker socket. Access to that socket is
+effectively root-equivalent control of the Docker host. Use a dedicated host,
+label only the workloads ARMAMENT is allowed to manage, and do not share this
+machine with untrusted workloads.
 
-`.env` is gitignored. Nothing in it is ever committed.
-
-**Why `SENTINEL_HOST=0.0.0.0`.** The harness runs inside a container, where
-`localhost` means the container itself, so a server bound to loopback is
-unreachable. Binding to `0.0.0.0` also exposes the port to your local network,
-where the bearer token is the only thing standing in front of container
-restarts. That is why it is opt-in and logs a warning rather than being the
-default.
-
-## 3. Set up Daytona (optional, for the sandbox)
-
-Skip this and the agent still investigates and remediates — it just cannot write
-and run its own analysis code.
-
-1. Sign up at [app.daytona.io](https://app.daytona.io).
-2. Go to [dashboard/keys](https://app.daytona.io/dashboard/keys) → **Create Key**.
-3. Tick exactly these scopes and nothing else:
-   - `write:sandboxes`
-   - `delete:sandboxes`
-   - `write:snapshots`
-   - `delete:snapshots`
-4. Copy the key into `DAYTONA_API_KEY` in `.env`.
-5. **Set a default region** in the Daytona dashboard. Without one, registering
-   the provider fails with *"This organization does not have a default region."*
-
-## 4. Start the harness
-
-TrueForge does not run natively on Windows. Its server fails at startup on an
-ESM path (`Received protocol 'c:'`) and its local sandbox is macOS/Linux only.
-Running it in Docker avoids both.
-
-```bash
-git clone https://github.com/truefoundry/trueforge
-cd trueforge
-cp packages/trueforge/.env.example packages/trueforge/.env
-```
-
-Before starting it, add a `docker-compose.override.yml` next to
-`docker-compose.yml`:
+On Linux Docker Engine, ensure the TrueForge server container has this mapping
+so host.docker.internal resolves:
 
 ```yaml
-# The server binds localhost by default, which Docker's port mapping cannot
-# reach: traffic arrives on the container's eth0 address, not loopback. Their
-# .env.example notes production images set this; Dockerfile.dev does not.
-services:
-  server:
-    environment:
-      HOST: 0.0.0.0
+extra_hosts:
+  - "host.docker.internal:host-gateway"
 ```
 
-Then:
+Docker Desktop normally provides host.docker.internal automatically.
 
-```bash
-docker compose up --build -d
-```
+## 3. Start TrueForge
 
-The first build takes several minutes. When it finishes:
+Install TrueForge in a separate checkout, following its upstream instructions.
+Start its server and verify that the host can reach:
 
 ```bash
 curl http://localhost:8791/healthz
-# {"status":"ok","version":"0.1.4"}
 ```
 
-If that returns nothing at all rather than an error, the `HOST` override is
-missing.
+If TrueForge is containerized, its server must listen on 0.0.0.0 inside the
+container and publish its configured host port. Keep the TrueForge checkout
+outside the ARMAMENT repository.
 
-Keep this checkout **outside** the ARMAMENT repository.
+## 4. Provision the agent
 
-## 5. Start this project's two processes
-
-Each needs its own terminal, and both stay running.
+Create and activate a Python virtual environment, then install the project:
 
 ```bash
-python -m sentinel_ops
-```
-
-```
-[sentinel-ops] listening on http://0.0.0.0:8931/mcp
-[sentinel-ops] managing containers labelled sentinel.managed=true
-[sentinel-ops] bound to 0.0.0.0: this port is reachable from the network ...
-```
-
-```bash
-python scripts/groq_shim.py
-```
-
-```
-[groq-shim] listening on http://0.0.0.0:8932/v1  ->  https://api.groq.com/openai/v1
-```
-
-## 6. Configure the agent
-
-```bash
+python -m venv .venv
+# Windows PowerShell:
+.venv\\Scripts\\Activate.ps1
+# macOS/Linux:
+# source .venv/bin/activate
+python -m pip install -e .
 python scripts/provision.py
 ```
 
-```
-harness      http://localhost:8791
-sentinel-ops http://host.docker.internal:8931/mcp
-groq via     http://host.docker.internal:8932/v1
+The provisioning script reads GROQ_API_KEY and optional DAYTONA_API_KEY from
+.env, then registers the Groq-compatible model endpoint, authenticated MCP
+connector, optional sandbox provider, and sentinel agent with TrueForge. It is
+safe to re-run after changing configuration.
 
-model provider
-  ok    model-providers/groq
-connector
-  ok    mcp-servers/sentinel-ops
-sandbox
-  ok    sandbox-providers/daytona
-agent
-  ok    agents/sentinel (created)
-```
-
-This registers everything through TrueForge's REST API. It is safe to re-run:
-each resource is created or replaced. Re-run it after changing the instructions,
-the model, or any key.
-
-Without a Daytona key you will see `skip  no DAYTONA_API_KEY set` instead, and
-the agent is configured without a sandbox rather than with a broken one.
-
-## 7. Give the agent something to look after
-
-Only containers carrying the managed label are visible. Anything else on your
-machine is invisible and unreachable.
+## 5. Check readiness
 
 ```bash
-docker run -d --label sentinel.managed=true --name checkout-api \
-  --memory 256m postgres:16-alpine \
-  sh -c 'echo "checkout-api listening on :8080"; \
-         echo "INFO: db pool size=20"; \
-         echo "ERROR: connection pool exhausted after 30s"; \
-         sleep 7200'
+docker compose ps
+curl http://localhost:8931/healthz
+curl http://localhost:8932/healthz
+curl http://localhost:8791/healthz
 ```
 
-## 8. Use it
+These endpoints prove process liveness, not that a full model/tool/approval
+workflow works. Complete a disposable-container smoke test before connecting
+any real workload.
 
-Open <http://localhost:8791>, start a session with the **sentinel** agent, and
-ask it something real:
-
-> checkout-api is throwing errors. Investigate and fix it.
-
-It will investigate on its own, then stop and ask before restarting anything.
-
-## Checking everything is up
+## 6. Run a disposable test workload
 
 ```bash
-curl http://localhost:8791/healthz    # harness
-curl http://localhost:8931/healthz    # sentinel-ops
-curl http://localhost:8932/healthz    # groq-shim
-docker ps --filter "label=sentinel.managed=true"
+docker run -d --label sentinel.managed=true --name armament-demo \
+  --memory 256m alpine:3.20 \
+  sh -c 'echo "ERROR: demo incident for ARMAMENT"; sleep 3600'
 ```
 
-## Starting again later
+Open the TrueForge UI, start a session with the sentinel agent, and ask it to
+investigate armament-demo. Inspect the evidence and confirm the harness pauses
+for human approval before any restart, memory change, or rollback.
 
-Docker containers restart with Docker Desktop, but the two Python processes do
-not. After a reboot:
+Remove the demo when finished:
 
 ```bash
-# terminal 1
-python -m sentinel_ops
-# terminal 2
-python scripts/groq_shim.py
+docker rm -f armament-demo
 ```
 
-The harness and its configuration survive restarts — Postgres keeps them — so
-`provision.py` only needs re-running when something changes.
+## 7. Operations
+
+```bash
+docker compose logs -f
+docker compose restart
+docker compose down
+```
+
+The named armament-audit volume persists the local JSONL audit log. It rotates
+at 10 MiB and retains five backups. This is not tamper-proof centralized audit
+storage.
+
+## Troubleshooting
+
+- Docker unavailable: start Docker Desktop/Engine and run docker compose version.
+- MCP unreachable from TrueForge: check host.docker.internal resolution, host
+  firewall rules, and that port 8931 is published.
+- Groq provider unreachable: check port 8932, the model provider base URL, and
+  the Groq credential stored in the host-side .env.
+- No services listed: ensure the target containers carry the exact configured
+  label (default sentinel.managed=true).
+- Approval not shown: stop testing remediation and inspect TrueForge's
+  destructive-tool approval configuration before proceeding.
