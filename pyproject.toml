@@ -45,7 +45,8 @@ packages = ["sentinel_ops"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -m 'not integration'"
+markers = ["integration: requires a live Docker Engine"]
 
 [tool.ruff]
 line-length = 90
