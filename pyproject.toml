@@ -2,7 +2,21 @@
 name = "sentinel-ops"
 version = "0.2.0"
 description = "Approval-gated MCP incident response tools for Dockerized services"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+keywords = ["mcp", "incident-response", "docker", "sre", "observability"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
     "mcp>=2.0.0",
     "docker>=7.1.0",
@@ -16,6 +30,11 @@ dev = ["pytest>=8.0.0", "ruff>=0.11.0"]
 
 [project.scripts]
 sentinel-ops = "sentinel_ops.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/Moazzam-Siddiqui/ARMAMENT"
+Repository = "https://github.com/Moazzam-Siddiqui/ARMAMENT"
+Issues = "https://github.com/Moazzam-Siddiqui/ARMAMENT/issues"
 
 [build-system]
 requires = ["hatchling"]
