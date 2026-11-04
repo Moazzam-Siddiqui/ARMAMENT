@@ -22,6 +22,7 @@ host-level control, and the TrueForge harness remains a separate dependency.
 - [ ] Docker socket access and network exposure reviewed independently
 - [ ] Audit events persisted, rotated, access-controlled, and recoverable
 - [ ] Secrets never included in logs, support bundles, or container output
+- [ ] Operator dashboard for service inventory, incidents, approvals, and audit history
 - [ ] Customer isolation and multi-tenant boundaries designed and tested
 - [ ] Backup, upgrade, rollback, and uninstall procedures verified
 - [ ] Published support policy, data-flow documentation, and incident process
