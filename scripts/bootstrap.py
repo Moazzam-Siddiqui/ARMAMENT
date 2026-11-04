@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import getpass
+import os
 import secrets
 import shutil
 import subprocess
@@ -49,6 +50,24 @@ def main() -> int:
         )
 
     compose = _docker_compose()
+    venv_dir = ROOT / ".venv"
+    if not venv_dir.exists():
+        subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], cwd=ROOT, check=True)
+    venv_python = (
+        venv_dir / "Scripts" / "python.exe"
+        if os.name == "nt"
+        else venv_dir / "bin" / "python"
+    )
+    subprocess.run(
+        [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+        cwd=ROOT,
+        check=True,
+    )
+    subprocess.run(
+        [str(venv_python), "-m", "pip", "install", "-e", "."],
+        cwd=ROOT,
+        check=True,
+    )
     print(
         "\\nSecurity notice: ARMAMENT needs ports 8931 and 8932 reachable from "
         "your TrueForge container. The default publishes them on all host "
@@ -103,8 +122,8 @@ def main() -> int:
         return 1
 
     print("\nNext: install/start the separate TrueForge harness, then run:")
-    print("  python -m pip install -e .")
-    print("  python scripts/provision.py")
+    print("  Windows: .venv\\Scripts\\python.exe scripts/provision.py")
+    print("  macOS/Linux: .venv/bin/python scripts/provision.py")
     print("TrueForge must reach host.docker.internal on ports 8931 and 8932.")
     print("Only label containers you explicitly authorize ARMAMENT to manage.")
     return 0
