@@ -34,8 +34,8 @@ import json
 import logging
 import os
 import re
-import sys
 import secrets
+import sys
 
 import httpx
 import uvicorn
