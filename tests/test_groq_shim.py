@@ -1,6 +1,9 @@
 import json
 
 import httpx
+from starlette.testclient import TestClient
+
+from scripts.groq_shim import app
 
 from scripts.groq_shim import retry_delay, sanitise
 
@@ -39,3 +42,20 @@ def test_retry_delay_prefers_retry_after_header() -> None:
 def test_retry_delay_reads_groq_error_message() -> None:
     response = httpx.Response(429)
     assert retry_delay(response, "Please try again in 10.5s") == 11.5
+
+
+def test_shim_requires_provider_bearer_token(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_SHIM_AUTH_TOKEN", "provider-secret")
+    response = TestClient(app).post("/v1/chat/completions", json={"messages": []})
+    assert response.status_code == 401
+
+
+def test_shim_rejects_oversized_request_before_upstream(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_SHIM_AUTH_TOKEN", "provider-secret")
+    monkeypatch.setattr("scripts.groq_shim.MAX_REQUEST_BYTES", 8)
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer provider-secret"},
+        content=b"0123456789",
+    )
+    assert response.status_code == 413
