@@ -24,6 +24,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import os
+from contextlib import contextmanager
 import urllib.error
 import urllib.request
 
@@ -42,6 +44,34 @@ PROVIDER_NAME = "groq"
 MODEL_NAME = "gpt-oss-120b"
 CONNECTOR_NAME = "sentinel-ops"
 AGENT_NAME = "sentinel"
+
+
+@contextmanager
+def _provision_lock():
+    """Serialize provisioning runs launched from the same checkout."""
+    from pathlib import Path
+
+    with (Path(__file__).resolve().parent.parent / ".provision.lock").open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            if not handle.read(1):
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 INSTRUCTIONS = """\
 You are an on-call engineer responsible for a set of containerised services.
@@ -169,6 +199,22 @@ def _upsert_agent(api: str, name: str, manifest: dict) -> None:
             "POST", f"{api}/agents", {"name": name, "manifest": manifest}
         )
         verb = "created"
+        if status == 409:
+            # Another client may have created the named agent between GET and POST.
+            status, text = _request("GET", f"{api}/agents")
+            try:
+                payload = json.loads(text) if status == 200 else {}
+            except json.JSONDecodeError:
+                payload = {}
+            items = payload.get("data") if isinstance(payload, dict) else payload
+            conflict_id = next(
+                (item.get("id") or item.get("agent_id") for item in items or []
+                 if isinstance(item, dict) and item.get("name") == name),
+                None,
+            )
+            if conflict_id:
+                status, text = _request("PUT", f"{api}/agents/{conflict_id}", {"manifest": manifest})
+                verb = "replaced after create conflict"
 
     if status in (200, 201, 204):
         print(f"  ok    agents/{name} ({verb})")
@@ -179,6 +225,11 @@ def _upsert_agent(api: str, name: str, manifest: dict) -> None:
 
 
 def main() -> int:
+    with _provision_lock():
+        return _main_locked()
+
+
+def _main_locked() -> int:
     _use_utf8_output()
     load_dotenv(override=False)
 
