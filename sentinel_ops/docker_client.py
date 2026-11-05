@@ -290,19 +290,30 @@ class DockerClient:
         async with self._lock_for(name):
             return await self._recreate_locked(name, image)
 
-    def _build_networking_config(self, info: dict[str, Any]) -> dict[str, Any] | None:
-        """Rebuild Docker endpoint settings for every network on the old container.
+    def _build_networking_config(
+        self, info: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, list[tuple[str, dict[str, Any]]]]:
+        """Build one create-time network and a list of later attachments.
 
-        HostConfig preserves the primary network mode, but it does not preserve
-        aliases or static endpoint addresses, and it cannot describe secondary
-        network attachments. Pass an explicit NetworkingConfig to create so
-        every attachment is restored before the replacement starts.
+        Docker Engine accepts only one network in NetworkingConfig during
+        container creation. Additional networks must be attached afterwards.
+        Resolve every network before teardown so missing networks cannot turn
+        a rollback into an avoidable outage.
         """
         attached = info.get("NetworkSettings", {}).get("Networks") or {}
         if not attached:
-            return None
+            return None, []
 
-        endpoints: dict[str, Any] = {}
+        network_mode = (info.get("HostConfig") or {}).get("NetworkMode", "")
+        if network_mode in attached:
+            primary_name = network_mode
+        elif network_mode in ("", "default", "bridge") and "bridge" in attached:
+            primary_name = "bridge"
+        else:
+            primary_name = next(iter(attached))
+
+        primary_config: dict[str, Any] | None = None
+        additional: list[tuple[str, dict[str, Any]]] = []
         for network_name, settings in attached.items():
             network = self._client.networks.get(network_name)
             ipam = settings.get("IPAMConfig") or {}
@@ -324,11 +335,16 @@ class DockerClient:
             driver_opts = settings.get("DriverOpts")
             if driver_opts:
                 endpoint_args["driver_opt"] = driver_opts
-            endpoints[network_name] = self._client.api.create_endpoint_config(
-                **endpoint_args
-            )
 
-        return self._client.api.create_networking_config(endpoints)
+            if network_name == primary_name:
+                endpoint = self._client.api.create_endpoint_config(**endpoint_args)
+                primary_config = self._client.api.create_networking_config(
+                    {network_name: endpoint}
+                )
+            else:
+                additional.append((network.id, endpoint_args))
+
+        return primary_config, additional
 
     async def _recreate_locked(self, name: str, image: str) -> str:
         container = await self.resolve(name)
@@ -363,7 +379,7 @@ class DockerClient:
 
         # Resolve network IDs and construct endpoint settings before teardown.
         # If a network disappeared, fail while the original service is intact.
-        networking_config = await asyncio.to_thread(
+        networking_config, additional_networks = await asyncio.to_thread(
             self._build_networking_config, info
         )
 
@@ -384,6 +400,10 @@ class DockerClient:
                 host_config=info["HostConfig"],
                 networking_config=networking_config,
             )
+            for network_id, endpoint_args in additional_networks:
+                self._client.api.connect_container_to_network(
+                    created["Id"], network_id, **endpoint_args
+                )
             self._client.api.start(created["Id"])
 
         try:
