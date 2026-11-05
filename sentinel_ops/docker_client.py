@@ -362,30 +362,6 @@ class DockerClient:
                 f"replacement would be unreachable by this agent."
             )
 
-        def rebuild(target_image: str) -> None:
-            """Recreate the container on target_image, preserving everything else.
-
-            HostConfig carries ports, mounts, restart policy and resource
-            limits, so passing it through wholesale is what keeps the
-            replacement faithful to the original.
-            """
-            created = self._client.api.create_container(
-                image=target_image,
-                command=info["Config"].get("Cmd"),
-                entrypoint=info["Config"].get("Entrypoint"),
-                environment=info["Config"].get("Env"),
-                labels=labels,
-                working_dir=info["Config"].get("WorkingDir") or None,
-                user=info["Config"].get("User") or None,
-                ports=list(info["Config"].get("ExposedPorts") or {}),
-                name=_strip_slash(info["Name"]),
-                host_config=info["HostConfig"],
-            )
-            self._client.api.start(created["Id"])
-
-        await asyncio.to_thread(lambda: container.stop(timeout=10))
-        await asyncio.to_thread(lambda: container.remove(force=True))
-
         service_name = _strip_slash(info["Name"])
 
         # Resolve network IDs and construct endpoint settings before teardown.
@@ -393,6 +369,9 @@ class DockerClient:
         networking_config = await asyncio.to_thread(
             self._build_networking_config, info
         )
+
+        await asyncio.to_thread(lambda: container.stop(timeout=10))
+        await asyncio.to_thread(lambda: container.remove(force=True))
 
         def rebuild_with_networks(target_image: str) -> None:
             created = self._client.api.create_container(
