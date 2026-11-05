@@ -14,6 +14,7 @@ class FakeContainer:
 def make_client() -> DockerClient:
     client = DockerClient.__new__(DockerClient)
     client._label = Label("sentinel.managed", "true")
+    client._locks = {}
     client._list_managed = lambda: [FakeContainer()]
     return client
 
