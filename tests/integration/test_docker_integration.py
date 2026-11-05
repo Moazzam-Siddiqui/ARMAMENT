@@ -60,15 +60,24 @@ def test_rollback_preserves_multiple_docker_networks_and_aliases() -> None:
     scoped = None
     try:
         daemon.images.get("alpine:3.20").tag(target_image)
-        managed = daemon.containers.run(
+        host_config = daemon.api.create_host_config(network_mode=frontend.name)
+        networking_config = daemon.api.create_networking_config(
+            {
+                frontend.name: daemon.api.create_endpoint_config(
+                    aliases=["frontend-service"]
+                )
+            }
+        )
+        created = daemon.api.create_container(
             "alpine:3.20",
-            "sleep 180",
-            detach=True,
+            command="sleep 180",
             name=container_name,
             labels={"sentinel.managed": "true"},
-            network=frontend.name,
+            host_config=host_config,
+            networking_config=networking_config,
         )
-        frontend.connect(managed, aliases=["frontend-service"])
+        daemon.api.start(created["Id"])
+        managed = daemon.containers.get(created["Id"])
         backend.connect(managed, aliases=["backend-service"])
 
         scoped = DockerClient(load_config({"SENTINEL_AUTH_TOKEN": "integration-token"}))
