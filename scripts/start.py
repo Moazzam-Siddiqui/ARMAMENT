@@ -210,7 +210,7 @@ def main() -> int:
 
         print("\nCtrl+C to stop the processes this script started.")
         while True:
-            for _name, process in processes:
+            for name, process in processes:
                 if process.poll() is not None:
                     print(f"\n{name} exited with code {process.returncode}")
                     return 1
