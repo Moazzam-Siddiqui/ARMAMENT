@@ -156,19 +156,36 @@ class DockerClient:
         return [asdict(s) for s in summaries]
 
     def _resolve_sync(self, name: str) -> Container:
-        """Resolve a service name to a container, refusing anything unlabelled.
+        """Resolve an exact service name or an unambiguous, 12+ char ID prefix.
 
-        All write paths must go through this rather than addressing Docker
-        directly.
+        Short ID prefixes are too easy to guess accidentally and can select an
+        unrelated managed container before the caller notices. All write paths
+        go through this method rather than addressing Docker directly.
         """
         wanted = _strip_slash(name).lower()
-        for container in self._list_managed():
-            if (
-                container.id == name
-                or container.id.startswith(wanted)
-                or _strip_slash(container.name).lower() == wanted
-            ):
+        containers = self._list_managed()
+
+        # Exact names are unambiguous and remain convenient for operators.
+        for container in containers:
+            if _strip_slash(container.name).lower() == wanted:
                 return container
+
+        # Docker displays 12-character short IDs. Require at least that much
+        # entropy and reject collisions rather than silently selecting the
+        # first match.
+        if len(wanted) >= 12:
+            matches = [
+                container
+                for container in containers
+                if container.id.lower().startswith(wanted)
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise ServiceNotFoundError(
+                    f"{name} is an ambiguous container ID prefix; use a longer ID."
+                )
+
         raise ServiceNotFoundError(name)
 
     async def resolve(self, name: str) -> Container:
