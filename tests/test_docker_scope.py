@@ -139,6 +139,6 @@ def test_container_name_resolution_is_case_sensitive() -> None:
 
 def test_service_name_and_container_id_share_the_same_lock() -> None:
     client = make_client()
-    by_name = client._lock_for("managed-api")
-    by_id = client._lock_for("managed-api")
-    assert by_name is by_id
+    by_name = client._resolve_sync("managed-api")
+    by_id = client._resolve_sync("a" * 12)
+    assert client._lock_for(by_name.name) is client._lock_for(by_id.name)
