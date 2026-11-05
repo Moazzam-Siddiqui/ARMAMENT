@@ -31,7 +31,9 @@ DESTRUCTIVE = ToolAnnotations(
     open_world_hint=False,
 )
 
-ServiceName = Annotated[str, Field(description="Name of the managed service", min_length=1)]
+ServiceName = Annotated[
+    str, Field(description="Name of the managed service", min_length=1)
+]
 
 # Stripped before the length is checked: ten spaces satisfied a bare
 # min_length and reached the approver as an empty justification, which is worse
