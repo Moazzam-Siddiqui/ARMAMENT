@@ -66,9 +66,10 @@ docs/troubleshooting.md guides.
 - MCP and Groq-shim ports are published for the separate TrueForge container.
   Restrict them with the host firewall to trusted sources. Never port-forward
   them or expose them directly to the public internet.
-- The MCP endpoint requires a generated bearer token. The Groq shim forwards
-  the model-provider credential supplied by TrueForge; it does not store the
-  Groq API key in its container environment.
+- The MCP endpoint requires a generated bearer token. The Groq shim separately
+  requires the provider's bearer credential and enforces a 2 MiB request-body
+  limit plus a 16-request concurrency ceiling. The Groq API key is supplied to
+  the shim through its Compose environment and remains a secret.
 - Keep .env private. It is used by the provisioning script and is gitignored.
 - Approval is enforced by TrueForge using destructive-tool annotations. Verify
   that approval prompts work before enabling any remediation.
