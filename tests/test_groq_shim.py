@@ -6,7 +6,16 @@ from scripts.groq_shim import retry_delay, sanitise
 
 
 def test_sanitise_removes_reasoning_metadata_from_assistant_messages() -> None:
-    payload = {"messages": [{"role": "assistant", "reasoning_content": "private", "thinking_blocks": []}, {"role": "user", "reasoning": "keep"}]}
+    payload = {
+        "messages": [
+            {
+                "role": "assistant",
+                "reasoning_content": "private",
+                "thinking_blocks": [],
+            },
+            {"role": "user", "reasoning": "keep"},
+        ]
+    }
     body, removed = sanitise(json.dumps(payload).encode())
     cleaned = json.loads(body)
     assert removed == 2
