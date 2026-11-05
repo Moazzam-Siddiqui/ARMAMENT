@@ -89,7 +89,6 @@ def test_rebuild_network_config_preserves_all_attachments_and_aliases() -> None:
                             "LinkLocalIPs": ["169.254.10.10"],
                         },
                         "DriverOpts": {"com.example.option": "value"},
-                        "GwPriority": 1,
                     },
                 }
             }
@@ -107,7 +106,6 @@ def test_rebuild_network_config_preserves_all_attachments_and_aliases() -> None:
             "ipv6_address": "fd00::10",
             "link_local_ips": ["169.254.10.10"],
             "driver_opt": {"com.example.option": "value"},
-            "gw_priority": 1,
         },
     }
 
