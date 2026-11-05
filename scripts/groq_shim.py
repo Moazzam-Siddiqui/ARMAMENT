@@ -58,7 +58,12 @@ MAX_RETRY_SECONDS = 60.0
 
 # Hop-by-hop headers, plus ones that describe a body we may have rewritten.
 SKIP_REQUEST_HEADERS = {"host", "content-length", "connection", "accept-encoding"}
-SKIP_RESPONSE_HEADERS = {"content-length", "content-encoding", "transfer-encoding", "connection"}
+SKIP_RESPONSE_HEADERS = {
+    "content-length",
+    "content-encoding",
+    "transfer-encoding",
+    "connection",
+}
 
 log = logging.getLogger("groq-shim")
 
@@ -142,7 +147,11 @@ async def proxy(request: Request) -> Response:
 
     for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
         upstream_request = client.build_request(
-            request.method, url, content=body, headers=headers, params=request.query_params
+            request.method,
+            url,
+            content=body,
+            headers=headers,
+            params=request.query_params,
         )
         try:
             upstream = await client.send(upstream_request, stream=True)
@@ -150,7 +159,12 @@ async def proxy(request: Request) -> Response:
             await client.aclose()
             log.error("upstream request failed: %s", exc)
             return JSONResponse(
-                {"error": {"message": f"Cannot reach Groq: {exc}", "type": "upstream_error"}},
+                {
+                    "error": {
+                        "message": f"Cannot reach Groq: {exc}",
+                        "type": "upstream_error",
+                    }
+                },
                 status_code=502,
             )
 
@@ -221,7 +235,11 @@ app = Starlette(
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s", stream=sys.stdout)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(name)s] %(message)s",
+        stream=sys.stdout,
+    )
     load_dotenv(override=False)
 
     port = int(os.environ.get("GROQ_SHIM_PORT") or 8932)
