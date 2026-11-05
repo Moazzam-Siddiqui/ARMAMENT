@@ -122,7 +122,7 @@ def main() -> int:
         return 1
 
     print("\nNext: install/start the separate TrueForge harness, then run:")
-    print("  Windows: .venv\\Scripts\\python.exe scripts/provision.py")
+    print("  Windows: .\.venv\Scripts\python.exe scripts/provision.py")
     print("  macOS/Linux: .venv/bin/python scripts/provision.py")
     print("TrueForge must reach host.docker.internal on ports 8931 and 8932.")
     print("Only label containers you explicitly authorize ARMAMENT to manage.")
