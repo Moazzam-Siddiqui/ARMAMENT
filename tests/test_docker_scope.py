@@ -95,22 +95,32 @@ def test_rebuild_network_config_preserves_all_attachments_and_aliases() -> None:
         }
     )
 
-    assert config == {
-        "network-frontend": {
-            "aliases": ["managed-api", "frontend-alias"],
-            "ipv4_address": "172.20.0.10",
+    assert config == (
+        {
+            "frontend": {
+                "aliases": ["managed-api", "frontend-alias"],
+                "ipv4_address": "172.20.0.10",
+            }
         },
-        "network-backend": {
-            "aliases": ["managed-api", "backend-alias"],
-            "links": ["db:database"],
-            "ipv6_address": "fd00::10",
-            "link_local_ips": ["169.254.10.10"],
-            "driver_opt": {"com.example.option": "value"},
-        },
-    }
+        [
+            (
+                "network-backend",
+                {
+                    "aliases": ["managed-api", "backend-alias"],
+                    "links": ["db:database"],
+                    "ipv6_address": "fd00::10",
+                    "link_local_ips": ["169.254.10.10"],
+                    "driver_opt": {"com.example.option": "value"},
+                },
+            )
+        ],
+    )
 
 
-def test_rebuild_network_config_is_none_without_network_attachments() -> None:
+def test_rebuild_network_config_is_empty_without_network_attachments() -> None:
     client = DockerClient.__new__(DockerClient)
     client._client = SimpleNamespace()
-    assert client._build_networking_config({"NetworkSettings": {"Networks": {}}}) is None
+    assert client._build_networking_config({"NetworkSettings": {"Networks": {}}}) == (
+        None,
+        [],
+    )
