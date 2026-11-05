@@ -151,7 +151,7 @@ def _main_locked() -> int:
         "SENTINEL_HOST=0.0.0.0",
         "PORT=8931",
         f"SENTINEL_AUTH_TOKEN={auth_token}",
-        f"GROQ_SHIM_AUTH_TOKEN={auth_token}",
+        f"GROQ_SHIM_AUTH_TOKEN={groq_key}",
         "SENTINEL_LABEL=sentinel.managed=true",
         f"GROQ_API_KEY={groq_key}",
         f"DAYTONA_API_KEY={daytona_key}",
