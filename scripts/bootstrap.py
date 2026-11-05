@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import tempfile
+import venv
 from contextlib import contextmanager
 import urllib.error
 import urllib.request
@@ -102,27 +103,21 @@ def _main_locked() -> int:
             "before running setup again."
         )
 
-    compose = _docker_compose()
+    _docker_compose()
     venv_dir = ROOT / ".venv"
     if not venv_dir.exists():
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)], cwd=ROOT, check=True
-        )
+        venv.EnvBuilder(with_pip=True).create(venv_dir)
     venv_python = (
         venv_dir / "Scripts" / "python.exe"
         if os.name == "nt"
         else venv_dir / "bin" / "python"
     )
-    subprocess.run(
-        [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-        cwd=ROOT,
-        check=True,
-    )
-    subprocess.run(
-        [str(venv_python), "-m", "pip", "install", "-e", "."],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-        cwd=ROOT,
-        check=True,
-    )
+    bin_dir = venv_python.parent
+    environment = os.environ.copy()
+    environment["VIRTUAL_ENV"] = str(venv_dir)
+    environment["PATH"] = str(bin_dir) + os.pathsep + environment.get("PATH", "")
+    subprocess.run(["pip", "install", "--upgrade", "pip"], cwd=ROOT, env=environment, check=True)
+    subprocess.run(["pip", "install", "-e", "."], cwd=ROOT, env=environment, check=True)
     print(
         "\\nSecurity notice: ARMAMENT needs ports 8931 and 8932 reachable from "
         "your TrueForge container. The default publishes them on all host "
@@ -168,7 +163,7 @@ def _main_locked() -> int:
     _write_env_atomically(env_path, values)
 
     try:
-        subprocess.run(compose + ["up", "--build", "-d"], cwd=ROOT, check=True)
+        subprocess.run(["docker", "compose", "up", "--build", "-d"], cwd=ROOT, check=True)
     except subprocess.CalledProcessError as exc:
         raise SystemExit(
             "Docker Compose failed. Inspect docker compose logs; .env was preserved."
