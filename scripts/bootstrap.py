@@ -23,7 +23,9 @@ def _docker_compose() -> list[str]:
         [docker, "compose", "version"], cwd=ROOT, capture_output=True, text=True
     )
     if result.returncode:
-        raise SystemExit("Docker Compose v2 is required. Update your Docker installation.")
+        raise SystemExit(
+            "Docker Compose v2 is required. Update your Docker installation."
+        )
     return [docker, "compose"]
 
 
@@ -40,8 +42,6 @@ def _wait_for_health(url: str, timeout: int = 60) -> bool:
 
 
 def main() -> int:
-    if sys.version_info < (3, 11):
-        raise SystemExit("ARMAMENT setup requires Python 3.11 or newer.")
     env_path = ROOT / ".env"
     if env_path.exists():
         raise SystemExit(
@@ -52,7 +52,9 @@ def main() -> int:
     compose = _docker_compose()
     venv_dir = ROOT / ".venv"
     if not venv_dir.exists():
-        subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], cwd=ROOT, check=True)
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(venv_dir)], cwd=ROOT, check=True
+        )
     venv_python = (
         venv_dir / "Scripts" / "python.exe"
         if os.name == "nt"
@@ -74,8 +76,16 @@ def main() -> int:
         "interfaces. Restrict both ports with your host firewall; never expose "
         "them to the public internet."
     )
-    if input("Have you restricted access to these ports? [y/N]: ").strip().lower() not in {"y", "yes"}:
-        raise SystemExit("Setup cancelled. Configure host firewall access before continuing.")
+    firewall_confirmed = (
+        input("Have you restricted access to these ports? [y/N]: ")
+        .strip()
+        .lower()
+        in {"y", "yes"}
+    )
+    if not firewall_confirmed:
+        raise SystemExit(
+            "Setup cancelled. Configure host firewall access before continuing."
+        )
     groq_key = getpass.getpass("Groq API key (input hidden): ").strip()
     if not groq_key:
         raise SystemExit("A Groq API key is required.")
