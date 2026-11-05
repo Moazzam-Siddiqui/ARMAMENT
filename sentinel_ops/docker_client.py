@@ -130,9 +130,12 @@ class DockerClient:
         await asyncio.to_thread(self._client.ping)
 
     def _list_managed(self) -> list[Container]:
-        return self._client.containers.list(
+        containers = self._client.containers.list(
             all=True, filters={"label": self._label.as_filter()}
         )
+        for container in containers:
+            container.reload()
+        return containers
 
     async def list_services(self) -> list[dict[str, Any]]:
         containers = await asyncio.to_thread(self._list_managed)
