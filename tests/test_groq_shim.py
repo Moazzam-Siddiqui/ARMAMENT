@@ -3,9 +3,7 @@ import json
 import httpx
 from starlette.testclient import TestClient
 
-from scripts.groq_shim import app
-
-from scripts.groq_shim import retry_delay, sanitise
+from scripts.groq_shim import app, retry_delay, sanitise
 
 
 def test_sanitise_removes_reasoning_metadata_from_assistant_messages() -> None:
