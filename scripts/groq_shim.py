@@ -174,55 +174,57 @@ async def proxy(request: Request) -> Response:
 
     await _proxy_semaphore.acquire()
     try:
-      for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
-        upstream_request = client.build_request(
-            request.method,
-            url,
-            content=body,
-            headers=headers,
-            params=request.query_params,
-        )
-        try:
-            upstream = await client.send(upstream_request, stream=True)
-        except httpx.HTTPError as exc:
-            await client.aclose()
-            log.error("upstream request failed: %s", exc)
-            return JSONResponse(
-                {
-                    "error": {
-                        "message": f"Cannot reach Groq: {exc}",
-                        "type": "upstream_error",
-                    }
-                },
-                status_code=502,
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            upstream_request = client.build_request(
+                request.method,
+                url,
+                content=body,
+                headers=headers,
+                params=request.query_params,
             )
+            try:
+                upstream = await client.send(upstream_request, stream=True)
+            except httpx.HTTPError as exc:
+                await client.aclose()
+                _proxy_semaphore.release()
+                log.error("upstream request failed: %s", exc)
+                return JSONResponse(
+                    {
+                        "error": {
+                            "message": f"Cannot reach Groq: {exc}",
+                            "type": "upstream_error",
+                        }
+                    },
+                    status_code=502,
+                )
 
-        if upstream.status_code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
-            break
+            if upstream.status_code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
+                break
 
-        # Read and close before waiting, so the connection is not held open
-        # across the pause. The read can itself fail if Groq drops the
-        # connection while returning the 429, which would otherwise escape as an
-        # unhandled 500 and leak the client.
-        try:
-            error_body = (await upstream.aread()).decode(errors="replace")
-        except httpx.HTTPError as exc:
+            # Read and close before waiting, so the connection is not held open
+            # across the pause. The read can itself fail if Groq drops the
+            # connection while returning the 429, which would otherwise escape as an
+            # unhandled 500 and leak the client.
+            try:
+                error_body = (await upstream.aread()).decode(errors="replace")
+            except httpx.HTTPError as exc:
+                await upstream.aclose()
+                await client.aclose()
+                _proxy_semaphore.release()
+                log.error("reading rate-limit response failed: %s", exc)
+                return JSONResponse(
+                    {"error": {"message": f"Cannot reach Groq: {exc}", "type": "upstream_error"}},
+                    status_code=502,
+                )
             await upstream.aclose()
-            await client.aclose()
-            log.error("reading rate-limit response failed: %s", exc)
-            return JSONResponse(
-                {"error": {"message": f"Cannot reach Groq: {exc}", "type": "upstream_error"}},
-                status_code=502,
+            delay = retry_delay(upstream, error_body)
+            log.warning(
+                "rate limited, waiting %.1fs then retrying (attempt %d/%d)",
+                delay,
+                attempt + 1,
+                MAX_RATE_LIMIT_RETRIES,
             )
-        await upstream.aclose()
-        delay = retry_delay(upstream, error_body)
-        log.warning(
-            "rate limited, waiting %.1fs then retrying (attempt %d/%d)",
-            delay,
-            attempt + 1,
-            MAX_RATE_LIMIT_RETRIES,
-        )
-        await asyncio.sleep(delay)
+            await asyncio.sleep(delay)
 
     except BaseException:
         await client.aclose()
