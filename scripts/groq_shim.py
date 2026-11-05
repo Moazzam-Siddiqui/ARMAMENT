@@ -149,11 +149,13 @@ async def proxy(request: Request) -> Response:
         except ValueError:
             return JSONResponse({"error": {"message": "Invalid Content-Length"}}, status_code=400)
 
+    await _proxy_semaphore.acquire()
     chunks: list[bytes] = []
     size = 0
     async for chunk in request.stream():
         size += len(chunk)
         if size > MAX_REQUEST_BYTES:
+            _proxy_semaphore.release()
             return JSONResponse({"error": {"message": "Request body too large"}}, status_code=413)
         chunks.append(chunk)
     raw_body = b"".join(chunks)
@@ -172,7 +174,6 @@ async def proxy(request: Request) -> Response:
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0))
 
-    await _proxy_semaphore.acquire()
     try:
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
             upstream_request = client.build_request(
