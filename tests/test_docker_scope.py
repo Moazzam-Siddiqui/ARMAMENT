@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from sentinel_ops.config import Label
@@ -54,3 +56,63 @@ def test_rejects_ambiguous_container_id_prefix() -> None:
     client._list_managed = lambda: [FakeContainer(), second]
     with pytest.raises(ServiceNotFoundError, match="ambiguous"):
         client._resolve_sync("a" * 12)
+
+
+
+def test_rebuild_network_config_preserves_all_attachments_and_aliases() -> None:
+    client = DockerClient.__new__(DockerClient)
+    networks = {
+        "frontend": SimpleNamespace(id="network-frontend"),
+        "backend": SimpleNamespace(id="network-backend"),
+    }
+    client._client = SimpleNamespace(
+        networks=SimpleNamespace(get=lambda name: networks[name]),
+        api=SimpleNamespace(
+            create_endpoint_config=lambda **kwargs: kwargs,
+            create_networking_config=lambda endpoints: endpoints,
+        ),
+    )
+
+    config = client._build_networking_config(
+        {
+            "NetworkSettings": {
+                "Networks": {
+                    "frontend": {
+                        "Aliases": ["managed-api", "frontend-alias"],
+                        "IPAMConfig": {"IPv4Address": "172.20.0.10"},
+                    },
+                    "backend": {
+                        "Aliases": ["managed-api", "backend-alias"],
+                        "Links": ["db:database"],
+                        "IPAMConfig": {
+                            "IPv6Address": "fd00::10",
+                            "LinkLocalIPs": ["169.254.10.10"],
+                        },
+                        "DriverOpts": {"com.example.option": "value"},
+                        "GwPriority": 1,
+                    },
+                }
+            }
+        }
+    )
+
+    assert config == {
+        "network-frontend": {
+            "aliases": ["managed-api", "frontend-alias"],
+            "ipv4_address": "172.20.0.10",
+        },
+        "network-backend": {
+            "aliases": ["managed-api", "backend-alias"],
+            "links": ["db:database"],
+            "ipv6_address": "fd00::10",
+            "link_local_ips": ["169.254.10.10"],
+            "driver_opt": {"com.example.option": "value"},
+            "gw_priority": 1,
+        },
+    }
+
+
+def test_rebuild_network_config_is_none_without_network_attachments() -> None:
+    client = DockerClient.__new__(DockerClient)
+    client._client = SimpleNamespace()
+    assert client._build_networking_config({"NetworkSettings": {"Networks": {}}}) is None
