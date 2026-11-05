@@ -6,13 +6,12 @@ import os
 import secrets
 import shutil
 import subprocess
-import sys
-import time
 import tempfile
-import venv
-from contextlib import contextmanager
+import time
 import urllib.error
 import urllib.request
+import venv
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,7 +46,10 @@ def _bootstrap_lock():
 def _write_env_atomically(path: Path, values: list[str]) -> None:
     fd, temporary = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=ROOT)
     try:
-        os.fchmod(fd, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except (AttributeError, OSError):
+            pass
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write("\n".join(values))
             handle.flush()
