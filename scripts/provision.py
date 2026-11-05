@@ -24,10 +24,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-import os
-from contextlib import contextmanager
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 
 from dotenv import load_dotenv
 
