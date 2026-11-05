@@ -35,6 +35,7 @@ import logging
 import os
 import re
 import sys
+import secrets
 
 import httpx
 import uvicorn
@@ -55,6 +56,9 @@ STRIPPED_MESSAGE_KEYS = ("reasoning_content", "reasoning", "thinking_blocks")
 MAX_RATE_LIMIT_RETRIES = 4
 FALLBACK_RETRY_SECONDS = 12.0
 MAX_RETRY_SECONDS = 60.0
+MAX_REQUEST_BYTES = 2 * 1024 * 1024
+MAX_CONCURRENT_REQUESTS = 16
+_proxy_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 # Hop-by-hop headers, plus ones that describe a body we may have rewritten.
 SKIP_REQUEST_HEADERS = {"host", "content-length", "connection", "accept-encoding"}
@@ -130,10 +134,33 @@ def retry_delay(response: httpx.Response, body: str) -> float:
 
 
 async def proxy(request: Request) -> Response:
+    expected_token = os.environ.get("GROQ_SHIM_AUTH_TOKEN") or os.environ.get("SENTINEL_AUTH_TOKEN", "")
+    supplied = request.headers.get("authorization", "")
+    if not expected_token or not supplied.startswith("Bearer ") or not secrets.compare_digest(
+        supplied.removeprefix("Bearer ").strip(), expected_token
+    ):
+        return JSONResponse({"error": {"message": "Unauthorized"}}, status_code=401)
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BYTES:
+                return JSONResponse({"error": {"message": "Request body too large"}}, status_code=413)
+        except ValueError:
+            return JSONResponse({"error": {"message": "Invalid Content-Length"}}, status_code=400)
+
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_REQUEST_BYTES:
+            return JSONResponse({"error": {"message": "Request body too large"}}, status_code=413)
+        chunks.append(chunk)
+    raw_body = b"".join(chunks)
     path = request.path_params["path"]
     url = f"{UPSTREAM}/{path}"
 
-    body, removed = sanitise(await request.body())
+    body, removed = sanitise(raw_body)
     if removed:
         log.info("stripped %d reasoning key(s) from %s", removed, path)
 
@@ -145,7 +172,9 @@ async def proxy(request: Request) -> Response:
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0))
 
-    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+    await _proxy_semaphore.acquire()
+    try:
+      for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
         upstream_request = client.build_request(
             request.method,
             url,
@@ -195,6 +224,10 @@ async def proxy(request: Request) -> Response:
         )
         await asyncio.sleep(delay)
 
+    except BaseException:
+        await client.aclose()
+        raise
+
     response_headers = {
         name: value
         for name, value in upstream.headers.items()
@@ -213,6 +246,7 @@ async def proxy(request: Request) -> Response:
         finally:
             await upstream.aclose()
             await client.aclose()
+            _proxy_semaphore.release()
 
     return StreamingResponse(
         stream(),
