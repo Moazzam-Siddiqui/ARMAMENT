@@ -165,7 +165,9 @@ def _upsert_agent(api: str, name: str, manifest: dict) -> None:
         )
         verb = "replaced"
     else:
-        status, text = _request("POST", f"{api}/agents", {"name": name, "manifest": manifest})
+        status, text = _request(
+            "POST", f"{api}/agents", {"name": name, "manifest": manifest}
+        )
         verb = "created"
 
     if status in (200, 201, 204):
