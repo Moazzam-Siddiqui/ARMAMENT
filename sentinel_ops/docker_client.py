@@ -290,6 +290,49 @@ class DockerClient:
         async with self._lock_for(name):
             return await self._recreate_locked(name, image)
 
+    def _build_networking_config(self, info: dict[str, Any]) -> dict[str, Any] | None:
+        """Rebuild Docker endpoint settings for every network on the old container.
+
+        HostConfig preserves the primary network mode, but it does not preserve
+        aliases or static endpoint addresses, and it cannot describe secondary
+        network attachments. Pass an explicit NetworkingConfig to create so
+        every attachment is restored before the replacement starts.
+        """
+        attached = info.get("NetworkSettings", {}).get("Networks") or {}
+        if not attached:
+            return None
+
+        endpoints: dict[str, Any] = {}
+        for network_name, settings in attached.items():
+            network = self._client.networks.get(network_name)
+            ipam = settings.get("IPAMConfig") or {}
+            endpoint_args: dict[str, Any] = {}
+
+            aliases = settings.get("Aliases")
+            links = settings.get("Links")
+            link_local_ips = ipam.get("LinkLocalIPs")
+            if aliases:
+                endpoint_args["aliases"] = aliases
+            if links:
+                endpoint_args["links"] = links
+            if ipam.get("IPv4Address"):
+                endpoint_args["ipv4_address"] = ipam["IPv4Address"]
+            if ipam.get("IPv6Address"):
+                endpoint_args["ipv6_address"] = ipam["IPv6Address"]
+            if link_local_ips:
+                endpoint_args["link_local_ips"] = link_local_ips
+            driver_opts = settings.get("DriverOpts")
+            if driver_opts:
+                endpoint_args["driver_opt"] = driver_opts
+            if settings.get("GwPriority") is not None:
+                endpoint_args["gw_priority"] = settings["GwPriority"]
+
+            endpoints[network.id] = self._client.api.create_endpoint_config(
+                **endpoint_args
+            )
+
+        return self._client.api.create_networking_config(endpoints)
+
     async def _recreate_locked(self, name: str, image: str) -> str:
         container = await self.resolve(name)
         info = container.attrs
@@ -345,8 +388,30 @@ class DockerClient:
 
         service_name = _strip_slash(info["Name"])
 
+        # Resolve network IDs and construct endpoint settings before teardown.
+        # If a network disappeared, fail while the original service is intact.
+        networking_config = await asyncio.to_thread(
+            self._build_networking_config, info
+        )
+
+        def rebuild_with_networks(target_image: str) -> None:
+            created = self._client.api.create_container(
+                image=target_image,
+                command=info["Config"].get("Cmd"),
+                entrypoint=info["Config"].get("Entrypoint"),
+                environment=info["Config"].get("Env"),
+                labels=labels,
+                working_dir=info["Config"].get("WorkingDir") or None,
+                user=info["Config"].get("User") or None,
+                ports=list(info["Config"].get("ExposedPorts") or {}),
+                name=service_name,
+                host_config=info["HostConfig"],
+                networking_config=networking_config,
+            )
+            self._client.api.start(created["Id"])
+
         try:
-            await asyncio.to_thread(lambda: rebuild(image))
+            await asyncio.to_thread(lambda: rebuild_with_networks(image))
         except (DockerException, OSError) as exc:
             # The failure may have come from start rather than create, in which
             # case a container on the new image already holds the name. Left in
@@ -355,7 +420,7 @@ class DockerClient:
             await asyncio.to_thread(lambda: self._force_remove_by_name(service_name))
 
             try:
-                await asyncio.to_thread(lambda: rebuild(previous_image))
+                await asyncio.to_thread(lambda: rebuild_with_networks(previous_image))
                 restored = True
             except (DockerException, OSError):
                 restored = False
