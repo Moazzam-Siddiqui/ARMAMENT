@@ -1,6 +1,7 @@
 """HTTP surface for the MCP server and the read-only operator dashboard."""
 from __future__ import annotations
 
+import logging
 import secrets
 
 from mcp.server.mcpserver import MCPServer
@@ -17,6 +18,8 @@ from .config import Config
 from .docker_client import DockerClient
 from .tools.read import register_read_tools
 from .tools.write import register_write_tools
+
+log = logging.getLogger("sentinel-ops")
 
 SERVER_NAME = "sentinel-ops"
 SERVER_VERSION = "0.2.0"
@@ -220,6 +223,7 @@ def create_app(config: Config, docker: DockerClient) -> Starlette:
         try:
             return JSONResponse(await docker.list_services())
         except Exception:  # noqa: BLE001 - keep Docker internals out of API responses
+            log.exception("dashboard service listing failed")
             return JSONResponse(
                 {"error": "Unable to query Docker. Check daemon connectivity and logs."},
                 status_code=503,
@@ -229,8 +233,9 @@ def create_app(config: Config, docker: DockerClient) -> Starlette:
         try:
             limit = int(request.query_params.get("limit", "100"))
             return JSONResponse(audit.recent_events(limit))
-        except (ValueError, OSError):
-            return JSONResponse({"error": "Invalid audit query."}, status_code=400)
+        except (ValueError, OSError, UnicodeDecodeError):
+            log.exception("dashboard audit query failed")
+            return JSONResponse({"error": "Unable to read audit history."}, status_code=400)
 
     app.router.routes.extend(
         [
