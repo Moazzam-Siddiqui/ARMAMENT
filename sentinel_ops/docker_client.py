@@ -229,13 +229,13 @@ class DockerClient:
             )
         )
 
-    async def restart(self, name: str, timeout: int = 10) -> None:
+    async def restart(self, name: str, timeout_seconds: int = 10) -> None:
         """Restart a service in place. Config and image are unchanged."""
         async with self._lock_for(name):
             # Resolved inside the lock: a concurrent rollback may have rebuilt
             # this service since the call was issued.
             container = await self.resolve(name)
-            await asyncio.to_thread(lambda: container.restart(timeout=timeout))
+            await asyncio.to_thread(lambda: container.restart(timeout=timeout_seconds))
 
     async def set_memory_limit(self, name: str, megabytes: int) -> float | None:
         """Raise the memory ceiling of a running service.
