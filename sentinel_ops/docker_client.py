@@ -315,7 +315,7 @@ class DockerClient:
         primary_config: dict[str, Any] | None = None
         additional: list[tuple[str, dict[str, Any]]] = []
         for network_name, settings in attached.items():
-            network = self._client.networks.get(network_name)
+            self._client.networks.get(network_name)
             ipam = settings.get("IPAMConfig") or {}
             endpoint_args: dict[str, Any] = {}
 
