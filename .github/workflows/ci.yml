@@ -32,7 +32,7 @@ jobs:
         run: python -m pytest -q
       - name: Validate Compose configuration
         run: |
-          printf 'SENTINEL_AUTH_TOKEN=ci-test-token\n' > .env
+          printf 'SENTINEL_AUTH_TOKEN=ci-test-token\nGROQ_API_KEY=ci-test-key\n' > .env
           docker compose config --quiet
       - name: Build ARMAMENT container image
         run: docker build --tag armament:ci .
