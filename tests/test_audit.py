@@ -55,7 +55,7 @@ def test_recent_events_returns_newest_first_and_enforces_limit(tmp_path, monkeyp
 def test_existing_audit_permissions_are_restricted(tmp_path, monkeypatch):
     path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("ARMAMENT_AUDIT_LOG", str(path))
-    path.write_text('{"action":"test"}\\n', encoding="utf-8")
+    path.write_text('{"action":"test"}\n', encoding="utf-8")
     path.chmod(0o644)
 
     audit._append('{"action":"next"}')
@@ -66,8 +66,8 @@ def test_existing_audit_permissions_are_restricted(tmp_path, monkeypatch):
 def test_recent_events_includes_rotated_history_and_skips_corrupt_lines(tmp_path, monkeypatch):
     path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("ARMAMENT_AUDIT_LOG", str(path))
-    path.write_bytes(b'{"action":"active"}\\ninvalid-\\xff\\n')
-    path.with_name("audit.jsonl.1").write_text('{"action":"older"}\\n', encoding="utf-8")
+    path.write_bytes(b'{"action":"active"}\ninvalid-\xff\n')
+    path.with_name("audit.jsonl.1").write_text('{"action":"older"}\n', encoding="utf-8")
 
     assert [event["action"] for event in audit.recent_events(2)] == ["active", "older"]
 
