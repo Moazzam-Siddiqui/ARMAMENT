@@ -28,3 +28,29 @@ def test_refuses_container_outside_managed_listing() -> None:
         client._resolve_sync("unmanaged-api")
     with pytest.raises(ServiceNotFoundError):
         client._resolve_sync("b" * 64)
+
+def test_rejects_short_container_id_prefix() -> None:
+    client = make_client()
+    with pytest.raises(ServiceNotFoundError):
+        client._resolve_sync("a")
+
+
+def test_rejects_id_prefix_shorter_than_docker_short_id() -> None:
+    client = make_client()
+    with pytest.raises(ServiceNotFoundError):
+        client._resolve_sync("aaaaaaaaaaa")
+
+
+def test_accepts_twelve_character_container_id_prefix() -> None:
+    client = make_client()
+    assert client._resolve_sync("aaaaaaaaaaaa").id == "a" * 64
+
+
+def test_rejects_ambiguous_container_id_prefix() -> None:
+    client = make_client()
+    second = FakeContainer()
+    second.id = "a" * 12 + "b" * 52
+    second.name = "/managed-api-2"
+    client._list_managed = lambda: [FakeContainer(), second]
+    with pytest.raises(ServiceNotFoundError, match="ambiguous"):
+        client._resolve_sync("a" * 12)
