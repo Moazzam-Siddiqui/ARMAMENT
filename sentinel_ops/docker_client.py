@@ -324,10 +324,7 @@ class DockerClient:
             driver_opts = settings.get("DriverOpts")
             if driver_opts:
                 endpoint_args["driver_opt"] = driver_opts
-            if settings.get("GwPriority") is not None:
-                endpoint_args["gw_priority"] = settings["GwPriority"]
-
-            endpoints[network.id] = self._client.api.create_endpoint_config(
+            endpoints[network_name] = self._client.api.create_endpoint_config(
                 **endpoint_args
             )
 
