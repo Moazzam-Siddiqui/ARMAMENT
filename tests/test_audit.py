@@ -8,7 +8,14 @@ def test_record_writes_json_line_to_configured_location(tmp_path, monkeypatch):
     monkeypatch.setenv("ARMAMENT_AUDIT_LOG", str(path))
 
     import asyncio
-    asyncio.run(audit.record("restart_service", "api", "Observed stuck worker pool", "succeeded"))
+    asyncio.run(
+        audit.record(
+            "restart_service",
+            "api",
+            "Observed stuck worker pool",
+            "succeeded",
+        )
+    )
 
     event = json.loads(path.read_text(encoding="utf-8").strip())
     assert event["action"] == "restart_service"
