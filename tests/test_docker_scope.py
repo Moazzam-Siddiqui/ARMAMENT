@@ -124,3 +124,21 @@ def test_rebuild_network_config_is_empty_without_network_attachments() -> None:
         None,
         [],
     )
+
+
+def test_container_name_resolution_is_case_sensitive() -> None:
+    client = make_client()
+    second = FakeContainer()
+    second.id = "b" * 64
+    second.name = "/Managed-API"
+    client._list_managed = lambda: [FakeContainer(), second]
+
+    assert client._resolve_sync("managed-api").id == "a" * 64
+    assert client._resolve_sync("Managed-API").id == "b" * 64
+
+
+def test_service_name_and_container_id_share_the_same_lock() -> None:
+    client = make_client()
+    by_name = client._lock_for("managed-api")
+    by_id = client._lock_for("managed-api")
+    assert by_name is by_id
