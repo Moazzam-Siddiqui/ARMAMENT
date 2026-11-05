@@ -38,3 +38,6 @@ sentinel-audit.log
 # Scratch files from poking the API by hand
 *.tmp
 turn.json
+
+.bootstrap.lock
+.provision.lock

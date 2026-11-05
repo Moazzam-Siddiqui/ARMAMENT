@@ -107,7 +107,7 @@ class DockerClient:
         Keyed on the normalised name so "checkout-api" and "/checkout-api"
         cannot each take a different lock for the same container.
         """
-        key = _strip_slash(name).lower()
+        key = _strip_slash(name)
         lock = self._locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
@@ -130,9 +130,12 @@ class DockerClient:
         await asyncio.to_thread(self._client.ping)
 
     def _list_managed(self) -> list[Container]:
-        return self._client.containers.list(
+        containers = self._client.containers.list(
             all=True, filters={"label": self._label.as_filter()}
         )
+        for container in containers:
+            container.reload()
+        return containers
 
     async def list_services(self) -> list[dict[str, Any]]:
         containers = await asyncio.to_thread(self._list_managed)
@@ -156,19 +159,37 @@ class DockerClient:
         return [asdict(s) for s in summaries]
 
     def _resolve_sync(self, name: str) -> Container:
-        """Resolve a service name to a container, refusing anything unlabelled.
+        """Resolve an exact service name or an unambiguous, 12+ char ID prefix.
 
-        All write paths must go through this rather than addressing Docker
-        directly.
+        Short ID prefixes are too easy to guess accidentally and can select an
+        unrelated managed container before the caller notices. All write paths
+        go through this method rather than addressing Docker directly.
         """
-        wanted = _strip_slash(name).lower()
-        for container in self._list_managed():
-            if (
-                container.id == name
-                or container.id.startswith(wanted)
-                or _strip_slash(container.name).lower() == wanted
-            ):
+        wanted = _strip_slash(name)
+        containers = self._list_managed()
+
+        # Docker container names are case-sensitive. Never normalize them:
+        # two names differing only by case are distinct resources.
+        for container in containers:
+            if _strip_slash(container.name) == wanted:
                 return container
+
+        # Docker displays 12-character short IDs. Require at least that much
+        # entropy and reject collisions rather than silently selecting the
+        # first match.
+        if len(wanted) >= 12:
+            matches = [
+                container
+                for container in containers
+                if container.id.lower().startswith(wanted)
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise ServiceNotFoundError(
+                    f"{name} is an ambiguous container ID prefix; use a longer ID."
+                )
+
         raise ServiceNotFoundError(name)
 
     async def resolve(self, name: str) -> Container:
@@ -229,13 +250,13 @@ class DockerClient:
             )
         )
 
-    async def restart(self, name: str, timeout: int = 10) -> None:
+    async def restart(self, name: str, timeout_seconds: int = 10) -> None:
         """Restart a service in place. Config and image are unchanged."""
-        async with self._lock_for(name):
-            # Resolved inside the lock: a concurrent rollback may have rebuilt
-            # this service since the call was issued.
+        target = await self.resolve(name)
+        async with self._lock_for(_strip_slash(target.name)):
+            # Re-resolve after acquiring the canonical-name lock.
             container = await self.resolve(name)
-            await asyncio.to_thread(lambda: container.restart(timeout=timeout))
+            await asyncio.to_thread(lambda: container.restart(timeout=timeout_seconds))
 
     async def set_memory_limit(self, name: str, megabytes: int) -> float | None:
         """Raise the memory ceiling of a running service.
@@ -246,7 +267,8 @@ class DockerClient:
 
         Returns the previous limit in MB, or None if it was unlimited.
         """
-        async with self._lock_for(name):
+        target = await self.resolve(name)
+        async with self._lock_for(_strip_slash(target.name)):
             container = await self.resolve(name)
             previous = container.attrs["HostConfig"].get("Memory") or 0
             limit = f"{megabytes}m"
@@ -270,8 +292,65 @@ class DockerClient:
 
         Returns the image that was replaced.
         """
-        async with self._lock_for(name):
+        target = await self.resolve(name)
+        async with self._lock_for(_strip_slash(target.name)):
             return await self._recreate_locked(name, image)
+
+    def _build_networking_config(
+        self, info: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, list[tuple[str, dict[str, Any]]]]:
+        """Build one create-time network and a list of later attachments.
+
+        Docker Engine accepts only one network in NetworkingConfig during
+        container creation. Additional networks must be attached afterwards.
+        Resolve every network before teardown so missing networks cannot turn
+        a rollback into an avoidable outage.
+        """
+        attached = info.get("NetworkSettings", {}).get("Networks") or {}
+        if not attached:
+            return None, []
+
+        network_mode = (info.get("HostConfig") or {}).get("NetworkMode", "")
+        if network_mode in attached:
+            primary_name = network_mode
+        elif network_mode in ("", "default", "bridge") and "bridge" in attached:
+            primary_name = "bridge"
+        else:
+            primary_name = next(iter(attached))
+
+        primary_config: dict[str, Any] | None = None
+        additional: list[tuple[str, dict[str, Any]]] = []
+        for network_name, settings in attached.items():
+            network_id = self._client.networks.get(network_name).id
+            ipam = settings.get("IPAMConfig") or {}
+            endpoint_args: dict[str, Any] = {}
+
+            aliases = settings.get("Aliases")
+            links = settings.get("Links")
+            link_local_ips = ipam.get("LinkLocalIPs")
+            if aliases:
+                endpoint_args["aliases"] = aliases
+            if links:
+                endpoint_args["links"] = links
+            if ipam.get("IPv4Address"):
+                endpoint_args["ipv4_address"] = ipam["IPv4Address"]
+            if ipam.get("IPv6Address"):
+                endpoint_args["ipv6_address"] = ipam["IPv6Address"]
+            if link_local_ips:
+                endpoint_args["link_local_ips"] = link_local_ips
+            driver_opts = settings.get("DriverOpts")
+            if driver_opts:
+                endpoint_args["driver_opt"] = driver_opts
+
+            if network_name == primary_name:
+                endpoint = self._client.api.create_endpoint_config(**endpoint_args)
+                primary_config = self._client.api.create_networking_config(
+                    {network_name: endpoint}
+                )
+            else:
+                additional.append((network_id, endpoint_args))
+
+        return primary_config, additional
 
     async def _recreate_locked(self, name: str, image: str) -> str:
         container = await self.resolve(name)
@@ -302,13 +381,18 @@ class DockerClient:
                 f"replacement would be unreachable by this agent."
             )
 
-        def rebuild(target_image: str) -> None:
-            """Recreate the container on target_image, preserving everything else.
+        service_name = _strip_slash(info["Name"])
 
-            HostConfig carries ports, mounts, restart policy and resource
-            limits, so passing it through wholesale is what keeps the
-            replacement faithful to the original.
-            """
+        # Resolve network IDs and construct endpoint settings before teardown.
+        # If a network disappeared, fail while the original service is intact.
+        networking_config, additional_networks = await asyncio.to_thread(
+            self._build_networking_config, info
+        )
+
+        await asyncio.to_thread(lambda: container.stop(timeout=10))
+        await asyncio.to_thread(lambda: container.remove(force=True))
+
+        def rebuild_with_networks(target_image: str) -> None:
             created = self._client.api.create_container(
                 image=target_image,
                 command=info["Config"].get("Cmd"),
@@ -318,18 +402,18 @@ class DockerClient:
                 working_dir=info["Config"].get("WorkingDir") or None,
                 user=info["Config"].get("User") or None,
                 ports=list(info["Config"].get("ExposedPorts") or {}),
-                name=_strip_slash(info["Name"]),
+                name=service_name,
                 host_config=info["HostConfig"],
+                networking_config=networking_config,
             )
+            for network_id, endpoint_args in additional_networks:
+                self._client.api.connect_container_to_network(
+                    created["Id"], network_id, **endpoint_args
+                )
             self._client.api.start(created["Id"])
 
-        await asyncio.to_thread(lambda: container.stop(timeout=10))
-        await asyncio.to_thread(lambda: container.remove(force=True))
-
-        service_name = _strip_slash(info["Name"])
-
         try:
-            await asyncio.to_thread(lambda: rebuild(image))
+            await asyncio.to_thread(lambda: rebuild_with_networks(image))
         except (DockerException, OSError) as exc:
             # The failure may have come from start rather than create, in which
             # case a container on the new image already holds the name. Left in
@@ -338,7 +422,7 @@ class DockerClient:
             await asyncio.to_thread(lambda: self._force_remove_by_name(service_name))
 
             try:
-                await asyncio.to_thread(lambda: rebuild(previous_image))
+                await asyncio.to_thread(lambda: rebuild_with_networks(previous_image))
                 restored = True
             except (DockerException, OSError):
                 restored = False

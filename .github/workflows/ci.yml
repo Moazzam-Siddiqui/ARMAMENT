@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, crvt5, Crvt5.2]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install project and development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Compile Python sources
+        run: python -m compileall -q sentinel_ops scripts tests
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: python -m pytest -q
+      - name: Validate Compose configuration
+        run: |
+          printf 'SENTINEL_AUTH_TOKEN=ci-test-token\nGROQ_API_KEY=ci-test-key\n' > .env
+          docker compose config --quiet
+      - name: Build ARMAMENT container image
+        run: docker build --tag armament:ci .
+
+  docker-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest
+      - name: Verify Docker Engine
+        run: docker info
+      - name: Test real Docker management-label isolation
+        run: python -m pytest -m integration -q

@@ -1,0 +1,46 @@
+services:
+  sentinel-ops:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: armament/sentinel-ops:0.2.0
+    restart: unless-stopped
+    environment:
+      SENTINEL_HOST: 0.0.0.0
+      PORT: 8931
+      SENTINEL_AUTH_TOKEN: ${SENTINEL_AUTH_TOKEN:?Set SENTINEL_AUTH_TOKEN in .env}
+      SENTINEL_LABEL: ${SENTINEL_LABEL:-sentinel.managed=true}
+      SENTINEL_ALLOWED_HOSTS: ${SENTINEL_ALLOWED_HOSTS:-host.docker.internal}
+      ARMAMENT_AUDIT_LOG: /data/sentinel-audit.log
+    ports:
+      - "${ARMAMENT_BIND_ADDRESS:-0.0.0.0}:8931:8931"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - armament-audit:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8931/healthz', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  groq-shim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: armament/sentinel-ops:0.2.0
+    restart: unless-stopped
+    environment:
+      GROQ_SHIM_HOST: 0.0.0.0
+      GROQ_SHIM_PORT: 8932
+      GROQ_SHIM_AUTH_TOKEN: ${GROQ_API_KEY:?Set GROQ_API_KEY in .env}
+    command: ["python", "scripts/groq_shim.py"]
+    ports:
+      - "${ARMAMENT_BIND_ADDRESS:-0.0.0.0}:8932:8932"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8932/healthz', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+volumes:
+  armament-audit:

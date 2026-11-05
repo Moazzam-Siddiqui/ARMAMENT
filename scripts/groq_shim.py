@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sys
 
 import httpx
@@ -55,10 +56,18 @@ STRIPPED_MESSAGE_KEYS = ("reasoning_content", "reasoning", "thinking_blocks")
 MAX_RATE_LIMIT_RETRIES = 4
 FALLBACK_RETRY_SECONDS = 12.0
 MAX_RETRY_SECONDS = 60.0
+MAX_REQUEST_BYTES = 2 * 1024 * 1024
+MAX_CONCURRENT_REQUESTS = 16
+_proxy_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 # Hop-by-hop headers, plus ones that describe a body we may have rewritten.
 SKIP_REQUEST_HEADERS = {"host", "content-length", "connection", "accept-encoding"}
-SKIP_RESPONSE_HEADERS = {"content-length", "content-encoding", "transfer-encoding", "connection"}
+SKIP_RESPONSE_HEADERS = {
+    "content-length",
+    "content-encoding",
+    "transfer-encoding",
+    "connection",
+}
 
 log = logging.getLogger("groq-shim")
 
@@ -87,7 +96,7 @@ def sanitise(body: bytes) -> tuple[bytes, int]:
 
     removed = 0
     for message in messages:
-        if not isinstance(message, dict):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
         for key in STRIPPED_MESSAGE_KEYS:
             if key in message:
@@ -125,10 +134,39 @@ def retry_delay(response: httpx.Response, body: str) -> float:
 
 
 async def proxy(request: Request) -> Response:
+    expected_token = os.environ.get("GROQ_SHIM_AUTH_TOKEN") or os.environ.get("SENTINEL_AUTH_TOKEN", "")
+    supplied = request.headers.get("authorization", "")
+    if not expected_token or not supplied.startswith("Bearer ") or not secrets.compare_digest(
+        supplied.removeprefix("Bearer ").strip(), expected_token
+    ):
+        return JSONResponse({"error": {"message": "Unauthorized"}}, status_code=401)
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BYTES:
+                return JSONResponse({"error": {"message": "Request body too large"}}, status_code=413)
+        except ValueError:
+            return JSONResponse({"error": {"message": "Invalid Content-Length"}}, status_code=400)
+
+    await _proxy_semaphore.acquire()
+    chunks: list[bytes] = []
+    size = 0
+    try:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_REQUEST_BYTES:
+                _proxy_semaphore.release()
+                return JSONResponse({"error": {"message": "Request body too large"}}, status_code=413)
+            chunks.append(chunk)
+    except BaseException:
+        _proxy_semaphore.release()
+        raise
+    raw_body = b"".join(chunks)
     path = request.path_params["path"]
     url = f"{UPSTREAM}/{path}"
 
-    body, removed = sanitise(await request.body())
+    body, removed = sanitise(raw_body)
     if removed:
         log.info("stripped %d reasoning key(s) from %s", removed, path)
 
@@ -140,46 +178,62 @@ async def proxy(request: Request) -> Response:
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=15.0))
 
-    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
-        upstream_request = client.build_request(
-            request.method, url, content=body, headers=headers, params=request.query_params
-        )
-        try:
-            upstream = await client.send(upstream_request, stream=True)
-        except httpx.HTTPError as exc:
-            await client.aclose()
-            log.error("upstream request failed: %s", exc)
-            return JSONResponse(
-                {"error": {"message": f"Cannot reach Groq: {exc}", "type": "upstream_error"}},
-                status_code=502,
+    try:
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            upstream_request = client.build_request(
+                request.method,
+                url,
+                content=body,
+                headers=headers,
+                params=request.query_params,
             )
+            try:
+                upstream = await client.send(upstream_request, stream=True)
+            except httpx.HTTPError as exc:
+                await client.aclose()
+                _proxy_semaphore.release()
+                log.error("upstream request failed: %s", exc)
+                return JSONResponse(
+                    {
+                        "error": {
+                            "message": f"Cannot reach Groq: {exc}",
+                            "type": "upstream_error",
+                        }
+                    },
+                    status_code=502,
+                )
 
-        if upstream.status_code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
-            break
+            if upstream.status_code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
+                break
 
-        # Read and close before waiting, so the connection is not held open
-        # across the pause. The read can itself fail if Groq drops the
-        # connection while returning the 429, which would otherwise escape as an
-        # unhandled 500 and leak the client.
-        try:
-            error_body = (await upstream.aread()).decode(errors="replace")
-        except httpx.HTTPError as exc:
+            # Read and close before waiting, so the connection is not held open
+            # across the pause. The read can itself fail if Groq drops the
+            # connection while returning the 429, which would otherwise escape as an
+            # unhandled 500 and leak the client.
+            try:
+                error_body = (await upstream.aread()).decode(errors="replace")
+            except httpx.HTTPError as exc:
+                await upstream.aclose()
+                await client.aclose()
+                _proxy_semaphore.release()
+                log.error("reading rate-limit response failed: %s", exc)
+                return JSONResponse(
+                    {"error": {"message": f"Cannot reach Groq: {exc}", "type": "upstream_error"}},
+                    status_code=502,
+                )
             await upstream.aclose()
-            await client.aclose()
-            log.error("reading rate-limit response failed: %s", exc)
-            return JSONResponse(
-                {"error": {"message": f"Cannot reach Groq: {exc}", "type": "upstream_error"}},
-                status_code=502,
+            delay = retry_delay(upstream, error_body)
+            log.warning(
+                "rate limited, waiting %.1fs then retrying (attempt %d/%d)",
+                delay,
+                attempt + 1,
+                MAX_RATE_LIMIT_RETRIES,
             )
-        await upstream.aclose()
-        delay = retry_delay(upstream, error_body)
-        log.warning(
-            "rate limited, waiting %.1fs then retrying (attempt %d/%d)",
-            delay,
-            attempt + 1,
-            MAX_RATE_LIMIT_RETRIES,
-        )
-        await asyncio.sleep(delay)
+            await asyncio.sleep(delay)
+
+    except BaseException:
+        await client.aclose()
+        raise
 
     response_headers = {
         name: value
@@ -199,6 +253,7 @@ async def proxy(request: Request) -> Response:
         finally:
             await upstream.aclose()
             await client.aclose()
+            _proxy_semaphore.release()
 
     return StreamingResponse(
         stream(),
@@ -221,7 +276,11 @@ app = Starlette(
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s", stream=sys.stdout)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(name)s] %(message)s",
+        stream=sys.stdout,
+    )
     load_dotenv(override=False)
 
     port = int(os.environ.get("GROQ_SHIM_PORT") or 8932)

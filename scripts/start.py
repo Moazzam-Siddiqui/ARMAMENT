@@ -220,10 +220,10 @@ def main() -> int:
         print("\nstopping")
         return 0
     finally:
-        for name, process in processes:
+        for _name, process in processes:
             if process.poll() is None:
                 process.terminate()
-        for name, process in processes:
+        for _name, process in processes:
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:

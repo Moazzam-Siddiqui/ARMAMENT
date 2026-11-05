@@ -228,10 +228,16 @@ What the harness thinks our tools are, and whether it can connect at all:
 curl http://localhost:8791/api/v1/mcp-servers/sentinel-ops/tools
 ```
 
-What was actually done to your containers:
+What was actually done to your containers (Compose deployment):
 
 ```bash
-cat sentinel-audit.log
+docker compose exec sentinel-ops sh -c 'cat /data/sentinel-audit.log'
+```
+
+To export the active audit file from the named volume to the current directory:
+
+```bash
+docker compose cp sentinel-ops:/data/sentinel-audit.log ./sentinel-audit.log
 ```
 
 Whether a restart was real — compare `started_at` before and after:

@@ -24,7 +24,9 @@ READ_ONLY = ToolAnnotations(
     open_world_hint=False,
 )
 
-ServiceName = Annotated[str, Field(description="Name of the managed service", min_length=1)]
+ServiceName = Annotated[
+    str, Field(description="Name of the managed service", min_length=1)
+]
 
 
 def _json(value: Any) -> str:
@@ -126,7 +128,9 @@ def register_read_tools(mcp: MCPServer, docker: DockerClient) -> None:
         service: ServiceName,
         contains: Annotated[
             str | None,
-            Field(description="Only return lines containing this text (case-insensitive)"),
+            Field(
+                description="Only return lines containing this text (case-insensitive)"
+            ),
         ] = None,
         tail: Annotated[
             int, Field(description="How many recent lines to scan", ge=1, le=1000)
