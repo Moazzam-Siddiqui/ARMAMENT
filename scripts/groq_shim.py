@@ -152,12 +152,16 @@ async def proxy(request: Request) -> Response:
     await _proxy_semaphore.acquire()
     chunks: list[bytes] = []
     size = 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > MAX_REQUEST_BYTES:
-            _proxy_semaphore.release()
-            return JSONResponse({"error": {"message": "Request body too large"}}, status_code=413)
-        chunks.append(chunk)
+    try:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_REQUEST_BYTES:
+                _proxy_semaphore.release()
+                return JSONResponse({"error": {"message": "Request body too large"}}, status_code=413)
+            chunks.append(chunk)
+    except BaseException:
+        _proxy_semaphore.release()
+        raise
     raw_body = b"".join(chunks)
     path = request.path_params["path"]
     url = f"{UPSTREAM}/{path}"
