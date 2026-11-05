@@ -107,7 +107,7 @@ class DockerClient:
         Keyed on the normalised name so "checkout-api" and "/checkout-api"
         cannot each take a different lock for the same container.
         """
-        key = _strip_slash(name).lower()
+        key = _strip_slash(name)
         lock = self._locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
@@ -162,12 +162,13 @@ class DockerClient:
         unrelated managed container before the caller notices. All write paths
         go through this method rather than addressing Docker directly.
         """
-        wanted = _strip_slash(name).lower()
+        wanted = _strip_slash(name)
         containers = self._list_managed()
 
-        # Exact names are unambiguous and remain convenient for operators.
+        # Docker container names are case-sensitive. Never normalize them:
+        # two names differing only by case are distinct resources.
         for container in containers:
-            if _strip_slash(container.name).lower() == wanted:
+            if _strip_slash(container.name) == wanted:
                 return container
 
         # Docker displays 12-character short IDs. Require at least that much
@@ -248,9 +249,9 @@ class DockerClient:
 
     async def restart(self, name: str, timeout_seconds: int = 10) -> None:
         """Restart a service in place. Config and image are unchanged."""
-        async with self._lock_for(name):
-            # Resolved inside the lock: a concurrent rollback may have rebuilt
-            # this service since the call was issued.
+        target = await self.resolve(name)
+        async with self._lock_for(_strip_slash(target.name)):
+            # Re-resolve after acquiring the canonical-name lock.
             container = await self.resolve(name)
             await asyncio.to_thread(lambda: container.restart(timeout=timeout_seconds))
 
@@ -263,7 +264,8 @@ class DockerClient:
 
         Returns the previous limit in MB, or None if it was unlimited.
         """
-        async with self._lock_for(name):
+        target = await self.resolve(name)
+        async with self._lock_for(_strip_slash(target.name)):
             container = await self.resolve(name)
             previous = container.attrs["HostConfig"].get("Memory") or 0
             limit = f"{megabytes}m"
@@ -287,7 +289,8 @@ class DockerClient:
 
         Returns the image that was replaced.
         """
-        async with self._lock_for(name):
+        target = await self.resolve(name)
+        async with self._lock_for(_strip_slash(target.name)):
             return await self._recreate_locked(name, image)
 
     def _build_networking_config(
