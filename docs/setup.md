@@ -67,7 +67,7 @@ outside the ARMAMENT repository.
 
 ```bash
 # Windows PowerShell
-.venv\\Scripts\\python.exe scripts/provision.py
+.\.venv\Scripts\python.exe scripts/provision.py
 # macOS/Linux
 .venv/bin/python scripts/provision.py
 ```
