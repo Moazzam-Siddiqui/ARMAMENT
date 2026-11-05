@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -52,7 +52,7 @@ async def record(
 ) -> None:
     """Write one JSON line. Logging failure never triggers an unsafe retry."""
     entry: dict[str, Any] = {
-        "at": datetime.now(timezone.utc).isoformat(),
+        "at": datetime.now(UTC).isoformat(),
         "action": action,
         "service": service,
         "reason": reason,
